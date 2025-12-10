@@ -10,4 +10,4 @@ pub use schema::{BqType, Field, FieldMode, Schema, PartitionConfig, ClusterConfi
 pub use dsl::{QueryDef, VersionDef, SqlRevision, QueryLoader};
 pub use executor::{PartitionWriter, Runner, BqClient};
 pub use migration::MigrationTracker;
-pub use drift::{Checksums, DriftDetector, DriftReport, DriftState, PartitionState};
+pub use drift::{Checksums, ExecutionArtifact, DriftDetector, DriftReport, DriftState, PartitionState, compress_to_base64, decompress_from_base64};
