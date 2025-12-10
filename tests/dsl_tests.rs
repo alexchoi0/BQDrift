@@ -1,0 +1,206 @@
+use bqdrift::dsl::QueryLoader;
+use chrono::NaiveDate;
+use std::path::Path;
+
+fn fixtures_path() -> &'static Path {
+    Path::new("tests/fixtures")
+}
+
+#[test]
+fn test_load_simple_query() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml"));
+
+    assert!(query.is_ok());
+    let query = query.unwrap();
+
+    assert_eq!(query.name, "simple_query");
+    assert_eq!(query.destination.dataset, "test_dataset");
+    assert_eq!(query.destination.table, "simple_table");
+    assert_eq!(query.description, Some("A simple test query".to_string()));
+    assert_eq!(query.owner, Some("test-team".to_string()));
+    assert_eq!(query.tags, vec!["test"]);
+}
+
+#[test]
+fn test_load_simple_query_schema() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml")).unwrap();
+
+    assert_eq!(query.versions.len(), 1);
+    let v1 = &query.versions[0];
+    assert_eq!(v1.version, 1);
+    assert_eq!(v1.schema.fields.len(), 3);
+    assert!(v1.schema.has_field("date"));
+    assert!(v1.schema.has_field("region"));
+    assert!(v1.schema.has_field("count"));
+}
+
+#[test]
+fn test_load_simple_query_sql() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    assert!(v1.sql_content.contains("SELECT"));
+    assert!(v1.sql_content.contains("@partition_date"));
+}
+
+#[test]
+fn test_load_simple_query_partition() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml")).unwrap();
+
+    assert_eq!(query.destination.partition.field, Some("date".to_string()));
+}
+
+#[test]
+fn test_load_simple_query_cluster() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml")).unwrap();
+
+    assert!(query.cluster.is_some());
+    assert_eq!(query.cluster.as_ref().unwrap().fields, vec!["region"]);
+}
+
+#[test]
+fn test_load_versioned_query() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml"));
+
+    assert!(query.is_ok());
+    let query = query.unwrap();
+    assert_eq!(query.versions.len(), 3);
+}
+
+#[test]
+fn test_versioned_query_schema_reference() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    let v2 = &query.versions[1];
+
+    assert_eq!(v1.schema.fields.len(), v2.schema.fields.len());
+    assert_eq!(v1.schema.fields[0].name, v2.schema.fields[0].name);
+}
+
+#[test]
+fn test_versioned_query_schema_extension() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+    let v3 = &query.versions[2];
+
+    assert_eq!(v2.schema.fields.len(), 3);
+    assert_eq!(v3.schema.fields.len(), 4);
+    assert!(v3.schema.has_field("session_count"));
+}
+
+#[test]
+fn test_versioned_query_sql_revisions() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+    assert_eq!(v2.sql_revisions.len(), 1);
+
+    let rev = &v2.sql_revisions[0];
+    assert_eq!(rev.revision, 1);
+    assert_eq!(rev.reason, Some("Fixed null handling".to_string()));
+    assert!(rev.sql_content.contains("COALESCE"));
+}
+
+#[test]
+fn test_get_version_for_date() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let date_v1 = NaiveDate::from_ymd_opt(2024, 2, 15).unwrap();
+    let version = query.get_version_for_date(date_v1);
+    assert!(version.is_some());
+    assert_eq!(version.unwrap().version, 1);
+
+    let date_v2 = NaiveDate::from_ymd_opt(2024, 4, 15).unwrap();
+    let version = query.get_version_for_date(date_v2);
+    assert!(version.is_some());
+    assert_eq!(version.unwrap().version, 2);
+
+    let date_v3 = NaiveDate::from_ymd_opt(2024, 7, 15).unwrap();
+    let version = query.get_version_for_date(date_v3);
+    assert!(version.is_some());
+    assert_eq!(version.unwrap().version, 3);
+}
+
+#[test]
+fn test_get_version_for_date_before_first() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let date_before = NaiveDate::from_ymd_opt(2023, 12, 1).unwrap();
+    let version = query.get_version_for_date(date_before);
+    assert!(version.is_none());
+}
+
+#[test]
+fn test_get_sql_for_date_with_revision() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+
+    let before_revision = NaiveDate::from_ymd_opt(2024, 3, 10).unwrap();
+    let sql = v2.get_sql_for_date(before_revision);
+    assert!(!sql.contains("COALESCE"));
+
+    let after_revision = NaiveDate::from_ymd_opt(2024, 3, 20).unwrap();
+    let sql = v2.get_sql_for_date(after_revision);
+    assert!(sql.contains("COALESCE"));
+}
+
+#[test]
+fn test_latest_version() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let latest = query.latest_version();
+    assert!(latest.is_some());
+    assert_eq!(latest.unwrap().version, 3);
+}
+
+#[test]
+fn test_load_directory() {
+    let loader = QueryLoader::new();
+    let queries = loader.load_dir(fixtures_path());
+
+    assert!(queries.is_ok());
+    let queries = queries.unwrap();
+    assert_eq!(queries.len(), 2);
+}
+
+#[test]
+fn test_load_nonexistent_yaml() {
+    let loader = QueryLoader::new();
+    let result = loader.load_query("nonexistent.yaml");
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_effective_from_dates() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    assert_eq!(
+        query.versions[0].effective_from,
+        NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+    );
+    assert_eq!(
+        query.versions[1].effective_from,
+        NaiveDate::from_ymd_opt(2024, 3, 1).unwrap()
+    );
+    assert_eq!(
+        query.versions[2].effective_from,
+        NaiveDate::from_ymd_opt(2024, 6, 1).unwrap()
+    );
+}

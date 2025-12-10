@@ -1,0 +1,12 @@
+SELECT
+    DATE(e.created_at) AS date,
+    COALESCE(e.region, 'unknown') AS region,
+    COALESCE(u.tier, 'free') AS user_tier,
+    COUNT(DISTINCT e.user_id) AS unique_users,
+    COUNT(*) AS total_events,
+    AVG(CASE WHEN s.duration > 0 THEN s.duration END) AS avg_session_duration
+FROM raw.events e
+LEFT JOIN raw.users u ON e.user_id = u.id
+LEFT JOIN raw.sessions s ON e.session_id = s.id
+WHERE DATE(e.created_at) = @partition_date
+GROUP BY 1, 2, 3

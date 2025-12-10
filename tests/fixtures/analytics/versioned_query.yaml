@@ -1,0 +1,40 @@
+name: versioned_query
+destination:
+  dataset: test_dataset
+  table: versioned_table
+  partition:
+    field: date
+    type: DAY
+
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    sql: versioned_query.v1.sql
+    schema:
+      - name: date
+        type: DATE
+      - name: user_id
+        type: STRING
+      - name: events
+        type: INT64
+
+  - version: 2
+    effective_from: 2024-03-01
+    sql: versioned_query.v2.sql
+    sql_revisions:
+      - revision: 1
+        effective_from: 2024-03-15
+        sql: versioned_query.v2.r1.sql
+        reason: Fixed null handling
+        backfill_since: 2024-03-01
+    schema: ${{ versions.1.schema }}
+
+  - version: 3
+    effective_from: 2024-06-01
+    sql: versioned_query.v3.sql
+    schema:
+      base: ${{ versions.2.schema }}
+      add:
+        - name: session_count
+          type: INT64
+          nullable: true

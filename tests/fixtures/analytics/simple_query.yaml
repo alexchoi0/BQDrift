@@ -1,0 +1,25 @@
+name: simple_query
+destination:
+  dataset: test_dataset
+  table: simple_table
+  partition:
+    field: date
+    type: DAY
+  cluster:
+    - region
+
+description: A simple test query
+owner: test-team
+tags: [test]
+
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    sql: simple_query.v1.sql
+    schema:
+      - name: date
+        type: DATE
+      - name: region
+        type: STRING
+      - name: count
+        type: INT64
