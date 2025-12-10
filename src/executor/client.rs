@@ -165,4 +165,114 @@ impl BqClient {
     pub fn project_id(&self) -> &str {
         &self.project_id
     }
+
+    /// Execute a query and return the row count from the first column of the first row.
+    /// Useful for COUNT(*) queries or invariant checks.
+    pub async fn query_row_count(&self, sql: &str) -> Result<i64> {
+        let request = QueryRequest::new(sql);
+
+        let result = self.client
+            .job()
+            .query(&self.project_id, request)
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("query_row_count")
+                    .with_sql(sql);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        // Get the first row, first column as integer
+        if let Some(rows) = result.rows.as_ref() {
+            if let Some(first_row) = rows.first() {
+                if let Some(cells) = first_row.columns.as_ref() {
+                    if let Some(first_cell) = cells.first() {
+                        if let Some(value) = &first_cell.value {
+                            if let Some(s) = value.as_str() {
+                                return s.parse::<i64>().map_err(|_| {
+                                    BqDriftError::Schema(format!("Could not parse count value: {}", s))
+                                });
+                            } else if let Some(n) = value.as_i64() {
+                                return Ok(n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(0)
+    }
+
+    /// Execute a query and return a single float value from the first column of the first row.
+    pub async fn query_single_float(&self, sql: &str) -> Result<Option<f64>> {
+        let request = QueryRequest::new(sql);
+
+        let result = self.client
+            .job()
+            .query(&self.project_id, request)
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("query_single_float")
+                    .with_sql(sql);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        if let Some(rows) = result.rows.as_ref() {
+            if let Some(first_row) = rows.first() {
+                if let Some(cells) = first_row.columns.as_ref() {
+                    if let Some(first_cell) = cells.first() {
+                        if let Some(value) = &first_cell.value {
+                            if let Some(s) = value.as_str() {
+                                return Ok(Some(s.parse::<f64>().map_err(|_| {
+                                    BqDriftError::Schema(format!("Could not parse float value: {}", s))
+                                })?));
+                            } else if let Some(n) = value.as_f64() {
+                                return Ok(Some(n));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Execute a query and return a single integer value from the first column of the first row.
+    pub async fn query_single_int(&self, sql: &str) -> Result<Option<i64>> {
+        let request = QueryRequest::new(sql);
+
+        let result = self.client
+            .job()
+            .query(&self.project_id, request)
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("query_single_int")
+                    .with_sql(sql);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        if let Some(rows) = result.rows.as_ref() {
+            if let Some(first_row) = rows.first() {
+                if let Some(cells) = first_row.columns.as_ref() {
+                    if let Some(first_cell) = cells.first() {
+                        if let Some(value) = &first_cell.value {
+                            if let Some(s) = value.as_str() {
+                                return Ok(Some(s.parse::<i64>().map_err(|_| {
+                                    BqDriftError::Schema(format!("Could not parse int value: {}", s))
+                                })?));
+                            } else if let Some(n) = value.as_i64() {
+                                return Ok(Some(n));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
 }

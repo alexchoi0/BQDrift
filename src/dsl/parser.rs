@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use crate::schema::{Field, PartitionConfig, ClusterConfig, Schema};
+use crate::invariant::{InvariantsRef, InvariantsDef};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawQueryDef {
@@ -28,6 +29,8 @@ pub struct RawVersionDef {
     #[serde(default)]
     pub backfill_since: Option<NaiveDate>,
     pub schema: SchemaRef,
+    #[serde(default)]
+    pub invariants: Option<InvariantsRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,6 +94,7 @@ pub struct VersionDef {
     pub backfill_since: Option<NaiveDate>,
     pub schema: Schema,
     pub dependencies: HashSet<String>,
+    pub invariants: InvariantsDef,
 }
 
 #[derive(Debug, Clone)]

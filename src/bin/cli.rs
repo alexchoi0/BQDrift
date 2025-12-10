@@ -5,9 +5,10 @@ use std::process::ExitCode;
 use tracing::{info, error, warn};
 use tracing_subscriber::EnvFilter;
 
-use bqdrift::{QueryLoader, QueryValidator, Runner};
+use bqdrift::{QueryLoader, QueryValidator, Runner, CheckStatus, Severity, InvariantChecker, resolve_invariants_def};
 use bqdrift::executor::BqClient;
 use bqdrift::error::{BqDriftError, BigQueryError};
+use bqdrift::executor::WriteStats;
 
 #[derive(Parser)]
 #[command(name = "bqdrift")]
@@ -55,6 +56,10 @@ enum Commands {
         /// Dry run - validate and show SQL without executing
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip invariant checks
+        #[arg(long)]
+        skip_invariants: bool,
     },
 
     /// Backfill a query for a date range
@@ -73,6 +78,28 @@ enum Commands {
         /// Dry run - show what would be executed
         #[arg(long)]
         dry_run: bool,
+
+        /// Skip invariant checks
+        #[arg(long)]
+        skip_invariants: bool,
+    },
+
+    /// Run invariant checks only (no query execution)
+    Check {
+        /// Query name
+        query: String,
+
+        /// Partition date (defaults to today)
+        #[arg(short, long)]
+        date: Option<NaiveDate>,
+
+        /// Run only before checks
+        #[arg(long)]
+        before: bool,
+
+        /// Run only after checks
+        #[arg(long)]
+        after: bool,
     },
 
     /// Show query details
@@ -150,14 +177,19 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_list(&loader, &cli.queries, detailed)?;
         }
 
-        Commands::Run { query, date, dry_run } => {
+        Commands::Run { query, date, dry_run, skip_invariants } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
-            cmd_run(&loader, &cli.queries, &project, query, date, dry_run).await?;
+            cmd_run(&loader, &cli.queries, &project, query, date, dry_run, skip_invariants).await?;
         }
 
-        Commands::Backfill { query, from, to, dry_run } => {
+        Commands::Backfill { query, from, to, dry_run, skip_invariants } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
-            cmd_backfill(&loader, &cli.queries, &project, &query, from, to, dry_run).await?;
+            cmd_backfill(&loader, &cli.queries, &project, &query, from, to, dry_run, skip_invariants).await?;
+        }
+
+        Commands::Check { query, date, before, after } => {
+            let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
+            cmd_check(&loader, &cli.queries, &project, &query, date, before, after).await?;
         }
 
         Commands::Show { query, version } => {
@@ -292,6 +324,7 @@ async fn cmd_run(
     query_name: Option<String>,
     date: Option<NaiveDate>,
     dry_run: bool,
+    skip_invariants: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let queries = loader.load_dir(queries_path)?;
     let date = date.unwrap_or_else(|| chrono::Utc::now().date_naive());
@@ -319,6 +352,14 @@ async fn cmd_run(
                 println!("Version: {}", version.version);
                 println!("SQL file: {}", version.sql);
                 println!("\n--- SQL ---\n{}\n-----------\n", version.get_sql_for_date(date));
+
+                if !skip_invariants {
+                    let before_count = version.invariants.before.len();
+                    let after_count = version.invariants.after.len();
+                    if before_count > 0 || after_count > 0 {
+                        println!("Invariants: {} before, {} after", before_count, after_count);
+                    }
+                }
             } else {
                 warn!("No version found for date {}", date);
             }
@@ -330,18 +371,22 @@ async fn cmd_run(
     let client = BqClient::new(project).await?;
     let runner = Runner::new(client, queries);
 
+    if skip_invariants {
+        info!("Running with invariants skipped");
+    }
+
     match query_name {
         Some(name) => {
             info!("Running query '{}' for date {}", name, date);
             let stats = runner.run_query(&name, date).await?;
-            println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_date);
+            print_stats(&stats, skip_invariants);
         }
         None => {
             info!("Running all queries for date {}", date);
             let report = runner.run_for_date(date).await?;
 
             for stats in &report.stats {
-                println!("✓ {} v{}", stats.query_name, stats.version);
+                print_stats(stats, skip_invariants);
             }
 
             for failure in &report.failures {
@@ -355,6 +400,52 @@ async fn cmd_run(
     Ok(())
 }
 
+fn print_stats(stats: &WriteStats, skip_invariants: bool) {
+    println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_date);
+
+    if !skip_invariants {
+        if let Some(report) = &stats.invariant_report {
+            let mut passed = 0;
+            let mut failed_warnings = 0;
+            let mut failed_errors = 0;
+
+            for result in report.before.iter().chain(report.after.iter()) {
+                match result.status {
+                    CheckStatus::Passed => passed += 1,
+                    CheckStatus::Failed => {
+                        if result.severity == Severity::Warning {
+                            failed_warnings += 1;
+                        } else {
+                            failed_errors += 1;
+                        }
+                    }
+                    CheckStatus::Skipped => {}
+                }
+            }
+
+            if passed > 0 || failed_warnings > 0 || failed_errors > 0 {
+                print!("  Invariants: {} passed", passed);
+                if failed_warnings > 0 {
+                    print!(", \x1b[33m{} warnings\x1b[0m", failed_warnings);
+                }
+                if failed_errors > 0 {
+                    print!(", \x1b[31m{} errors\x1b[0m", failed_errors);
+                }
+                println!();
+
+                for result in report.before.iter().chain(report.after.iter()) {
+                    if result.status == CheckStatus::Failed {
+                        let color = if result.severity == Severity::Warning { "33" } else { "31" };
+                        println!("    \x1b[{}m{}\x1b[0m {}: {}", color,
+                            if result.severity == Severity::Warning { "⚠" } else { "✗" },
+                            result.name, result.message);
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn cmd_backfill(
     loader: &QueryLoader,
     queries_path: &PathBuf,
@@ -363,6 +454,7 @@ async fn cmd_backfill(
     from: NaiveDate,
     to: NaiveDate,
     dry_run: bool,
+    skip_invariants: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let queries = loader.load_dir(queries_path)?;
 
@@ -386,13 +478,17 @@ async fn cmd_backfill(
         return Ok(());
     }
 
+    if skip_invariants {
+        info!("Running with invariants skipped");
+    }
+
     let client = BqClient::new(project).await?;
     let runner = Runner::new(client, queries);
 
     let report = runner.backfill(query_name, from, to).await?;
 
     for stats in &report.stats {
-        println!("✓ {} v{} for {}", stats.query_name, stats.version, stats.partition_date);
+        print_stats(stats, skip_invariants);
     }
 
     for failure in &report.failures {
@@ -400,6 +496,111 @@ async fn cmd_backfill(
     }
 
     println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
+
+    Ok(())
+}
+
+async fn cmd_check(
+    loader: &QueryLoader,
+    queries_path: &PathBuf,
+    project: &str,
+    query_name: &str,
+    date: Option<NaiveDate>,
+    run_before: bool,
+    run_after: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let queries = loader.load_dir(queries_path)?;
+    let date = date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+
+    let query = queries.iter()
+        .find(|q| q.name == query_name)
+        .ok_or_else(|| format!("Query '{}' not found", query_name))?;
+
+    let version = query.get_version_for_date(date)
+        .ok_or_else(|| format!("No version found for date {}", date))?;
+
+    let (before_checks, after_checks) = resolve_invariants_def(&version.invariants);
+
+    let run_all = !run_before && !run_after;
+
+    let client = BqClient::new(project).await?;
+    let checker = InvariantChecker::new(&client, &query.destination, date);
+
+    let mut total_passed = 0;
+    let mut total_failed = 0;
+    let mut has_errors = false;
+
+    println!("Running invariant checks for '{}' v{} on {}", query.name, version.version, date);
+    println!();
+
+    if (run_all || run_before) && !before_checks.is_empty() {
+        println!("Before checks:");
+        let results = checker.run_checks(&before_checks).await?;
+
+        for result in &results {
+            let status_icon = match result.status {
+                CheckStatus::Passed => {
+                    total_passed += 1;
+                    "\x1b[32m✓\x1b[0m"
+                }
+                CheckStatus::Failed => {
+                    total_failed += 1;
+                    if result.severity == Severity::Error {
+                        has_errors = true;
+                        "\x1b[31m✗\x1b[0m"
+                    } else {
+                        "\x1b[33m⚠\x1b[0m"
+                    }
+                }
+                CheckStatus::Skipped => "○",
+            };
+
+            println!("  {} {}: {}", status_icon, result.name, result.message);
+            if let Some(details) = &result.details {
+                println!("    {}", details);
+            }
+        }
+        println!();
+    }
+
+    if (run_all || run_after) && !after_checks.is_empty() {
+        println!("After checks:");
+        let results = checker.run_checks(&after_checks).await?;
+
+        for result in &results {
+            let status_icon = match result.status {
+                CheckStatus::Passed => {
+                    total_passed += 1;
+                    "\x1b[32m✓\x1b[0m"
+                }
+                CheckStatus::Failed => {
+                    total_failed += 1;
+                    if result.severity == Severity::Error {
+                        has_errors = true;
+                        "\x1b[31m✗\x1b[0m"
+                    } else {
+                        "\x1b[33m⚠\x1b[0m"
+                    }
+                }
+                CheckStatus::Skipped => "○",
+            };
+
+            println!("  {} {}: {}", status_icon, result.name, result.message);
+            if let Some(details) = &result.details {
+                println!("    {}", details);
+            }
+        }
+        println!();
+    }
+
+    if total_passed == 0 && total_failed == 0 {
+        println!("No invariant checks defined for this query/version.");
+    } else {
+        println!("{} passed, {} failed", total_passed, total_failed);
+        if has_errors {
+            return Err("Invariant checks failed with errors".into());
+        }
+    }
 
     Ok(())
 }

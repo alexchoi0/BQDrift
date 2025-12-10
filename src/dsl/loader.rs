@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use glob::glob;
 use crate::error::{BqDriftError, Result};
 use crate::schema::{ClusterConfig, Schema};
+use crate::invariant::{InvariantsDef, InvariantDef, InvariantCheck, SqlSource};
 use super::parser::{
     QueryDef, VersionDef, ResolvedSqlRevision, RawQueryDef,
 };
@@ -50,6 +51,7 @@ impl QueryLoader {
     fn resolve_query(&self, raw: RawQueryDef, base_dir: &Path) -> Result<QueryDef> {
         let mut resolved_schemas: HashMap<u32, Schema> = HashMap::new();
         let mut resolved_sqls: HashMap<u32, String> = HashMap::new();
+        let mut resolved_invariants: HashMap<u32, InvariantsDef> = HashMap::new();
         let mut versions: Vec<VersionDef> = Vec::new();
 
         let mut sorted_versions = raw.versions.clone();
@@ -77,8 +79,16 @@ impl QueryLoader {
                 base_dir,
             )?;
 
+            let invariants = self.resolver.resolve_invariants(
+                &raw_version.invariants,
+                &resolved_invariants,
+            )?;
+
+            let invariants = self.load_invariant_sql_files(invariants, base_dir)?;
+
             resolved_schemas.insert(raw_version.version, schema.clone());
             resolved_sqls.insert(raw_version.version, sql_filename.clone());
+            resolved_invariants.insert(raw_version.version, invariants.clone());
 
             versions.push(VersionDef {
                 version: raw_version.version,
@@ -90,6 +100,7 @@ impl QueryLoader {
                 backfill_since: raw_version.backfill_since,
                 schema,
                 dependencies,
+                invariants,
             });
         }
 
@@ -134,6 +145,89 @@ impl QueryLoader {
                 })
             })
             .collect()
+    }
+
+    fn load_invariant_sql_files(
+        &self,
+        mut invariants: InvariantsDef,
+        base_dir: &Path,
+    ) -> Result<InvariantsDef> {
+        for inv in &mut invariants.before {
+            self.load_invariant_check_sql(inv, base_dir)?;
+        }
+        for inv in &mut invariants.after {
+            self.load_invariant_check_sql(inv, base_dir)?;
+        }
+        Ok(invariants)
+    }
+
+    fn load_invariant_check_sql(
+        &self,
+        inv: &mut InvariantDef,
+        base_dir: &Path,
+    ) -> Result<()> {
+        match &inv.check {
+            InvariantCheck::ZeroRows { source } => {
+                if let SqlSource::Source(path) = source {
+                    let sql_path = base_dir.join(path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    inv.check = InvariantCheck::ZeroRows {
+                        source: SqlSource::SourceInline(content),
+                    };
+                }
+            }
+            InvariantCheck::RowCount { source, min, max } => {
+                if let Some(SqlSource::Source(path)) = source {
+                    let sql_path = base_dir.join(path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    inv.check = InvariantCheck::RowCount {
+                        source: Some(SqlSource::SourceInline(content)),
+                        min: *min,
+                        max: *max,
+                    };
+                }
+            }
+            InvariantCheck::NullPercentage { source, column, max_percentage } => {
+                if let Some(SqlSource::Source(path)) = source {
+                    let sql_path = base_dir.join(path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    inv.check = InvariantCheck::NullPercentage {
+                        source: Some(SqlSource::SourceInline(content)),
+                        column: column.clone(),
+                        max_percentage: *max_percentage,
+                    };
+                }
+            }
+            InvariantCheck::ColumnCheck { source, column, check } => {
+                if let Some(SqlSource::Source(path)) = source {
+                    let sql_path = base_dir.join(path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    inv.check = InvariantCheck::ColumnCheck {
+                        source: Some(SqlSource::SourceInline(content)),
+                        column: column.clone(),
+                        check: check.clone(),
+                    };
+                }
+            }
+            InvariantCheck::DistinctCount { source, column, min, max } => {
+                if let Some(SqlSource::Source(path)) = source {
+                    let sql_path = base_dir.join(path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    inv.check = InvariantCheck::DistinctCount {
+                        source: Some(SqlSource::SourceInline(content)),
+                        column: column.clone(),
+                        min: *min,
+                        max: *max,
+                    };
+                }
+            }
+        }
+        Ok(())
     }
 }
 

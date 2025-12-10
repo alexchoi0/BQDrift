@@ -4,6 +4,7 @@ pub mod dsl;
 pub mod executor;
 pub mod migration;
 pub mod drift;
+pub mod invariant;
 
 pub use error::{BqDriftError, Result};
 pub use schema::{BqType, Field, FieldMode, Schema, PartitionConfig, ClusterConfig};
@@ -11,3 +12,8 @@ pub use dsl::{QueryDef, VersionDef, SqlRevision, QueryLoader, QueryValidator, Va
 pub use executor::{PartitionWriter, Runner, BqClient};
 pub use migration::MigrationTracker;
 pub use drift::{Checksums, ExecutionArtifact, DriftDetector, DriftReport, DriftState, PartitionState, compress_to_base64, decompress_from_base64};
+pub use invariant::{
+    InvariantsRef, InvariantsDef, InvariantDef, InvariantCheck, Severity,
+    InvariantChecker, CheckResult, CheckStatus, InvariantReport,
+    resolve_invariants_def,
+};

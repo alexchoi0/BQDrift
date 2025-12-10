@@ -1,6 +1,10 @@
 use chrono::NaiveDate;
 use crate::error::{BqDriftError, Result};
 use crate::dsl::{QueryDef, VersionDef};
+use crate::invariant::{
+    InvariantChecker, InvariantReport, CheckStatus, Severity,
+    resolve_invariants_def,
+};
 use super::client::BqClient;
 
 #[derive(Debug, Clone)]
@@ -10,6 +14,7 @@ pub struct WriteStats {
     pub partition_date: NaiveDate,
     pub rows_written: Option<i64>,
     pub bytes_processed: Option<i64>,
+    pub invariant_report: Option<InvariantReport>,
 }
 
 pub struct PartitionWriter {
@@ -26,16 +31,65 @@ impl PartitionWriter {
         query_def: &QueryDef,
         partition_date: NaiveDate,
     ) -> Result<WriteStats> {
+        self.write_partition_with_invariants(query_def, partition_date, true).await
+    }
+
+    pub async fn write_partition_skip_invariants(
+        &self,
+        query_def: &QueryDef,
+        partition_date: NaiveDate,
+    ) -> Result<WriteStats> {
+        self.write_partition_with_invariants(query_def, partition_date, false).await
+    }
+
+    async fn write_partition_with_invariants(
+        &self,
+        query_def: &QueryDef,
+        partition_date: NaiveDate,
+        run_invariants: bool,
+    ) -> Result<WriteStats> {
         let version = query_def
             .get_version_for_date(partition_date)
             .ok_or_else(|| BqDriftError::Partition(
                 format!("No version found for date {}", partition_date)
             ))?;
 
-        let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
-        let full_sql = self.build_merge_sql(query_def, version, sql, partition_date);
+        let mut invariant_report = InvariantReport::default();
 
-        self.client.execute_query(&full_sql).await?;
+        if run_invariants {
+            let (before_checks, after_checks) = resolve_invariants_def(&version.invariants);
+
+            if !before_checks.is_empty() {
+                let checker = InvariantChecker::new(&self.client, &query_def.destination, partition_date);
+                let results = checker.run_checks(&before_checks).await?;
+
+                let has_error = results.iter().any(|r| {
+                    r.status == CheckStatus::Failed && r.severity == Severity::Error
+                });
+
+                invariant_report.before = results;
+
+                if has_error {
+                    return Err(BqDriftError::InvariantFailed(
+                        "Before invariant check(s) failed with error severity".to_string()
+                    ));
+                }
+            }
+
+            let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
+            let full_sql = self.build_merge_sql(query_def, version, sql, partition_date);
+            self.client.execute_query(&full_sql).await?;
+
+            if !after_checks.is_empty() {
+                let checker = InvariantChecker::new(&self.client, &query_def.destination, partition_date);
+                let results = checker.run_checks(&after_checks).await?;
+                invariant_report.after = results;
+            }
+        } else {
+            let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
+            let full_sql = self.build_merge_sql(query_def, version, sql, partition_date);
+            self.client.execute_query(&full_sql).await?;
+        }
 
         Ok(WriteStats {
             query_name: query_def.name.clone(),
@@ -43,6 +97,7 @@ impl PartitionWriter {
             partition_date,
             rows_written: None,
             bytes_processed: None,
+            invariant_report: if run_invariants { Some(invariant_report) } else { None },
         })
     }
 
@@ -90,39 +145,113 @@ impl PartitionWriter {
         query_def: &QueryDef,
         partition_date: NaiveDate,
     ) -> Result<WriteStats> {
+        self.write_partition_truncate_with_invariants(query_def, partition_date, true).await
+    }
+
+    pub async fn write_partition_truncate_skip_invariants(
+        &self,
+        query_def: &QueryDef,
+        partition_date: NaiveDate,
+    ) -> Result<WriteStats> {
+        self.write_partition_truncate_with_invariants(query_def, partition_date, false).await
+    }
+
+    async fn write_partition_truncate_with_invariants(
+        &self,
+        query_def: &QueryDef,
+        partition_date: NaiveDate,
+        run_invariants: bool,
+    ) -> Result<WriteStats> {
         let version = query_def
             .get_version_for_date(partition_date)
             .ok_or_else(|| BqDriftError::Partition(
                 format!("No version found for date {}", partition_date)
             ))?;
 
-        let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
+        let mut invariant_report = InvariantReport::default();
 
-        let dest_table = format!(
-            "{}.{}${}",
-            query_def.destination.dataset,
-            query_def.destination.table,
-            partition_date.format("%Y%m%d")
-        );
+        if run_invariants {
+            let (before_checks, after_checks) = resolve_invariants_def(&version.invariants);
 
-        let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+            if !before_checks.is_empty() {
+                let checker = InvariantChecker::new(&self.client, &query_def.destination, partition_date);
+                let results = checker.run_checks(&before_checks).await?;
 
-        let insert_sql = format!(
-            r#"
-            INSERT INTO `{dest_table}`
-            {parameterized_sql}
-            "#,
-            dest_table = dest_table,
-            parameterized_sql = parameterized_sql,
-        );
+                let has_error = results.iter().any(|r| {
+                    r.status == CheckStatus::Failed && r.severity == Severity::Error
+                });
 
-        let delete_sql = format!(
-            "DELETE FROM `{}` WHERE TRUE",
-            dest_table
-        );
+                invariant_report.before = results;
 
-        self.client.execute_query(&delete_sql).await?;
-        self.client.execute_query(&insert_sql).await?;
+                if has_error {
+                    return Err(BqDriftError::InvariantFailed(
+                        "Before invariant check(s) failed with error severity".to_string()
+                    ));
+                }
+            }
+
+            let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
+
+            let dest_table = format!(
+                "{}.{}${}",
+                query_def.destination.dataset,
+                query_def.destination.table,
+                partition_date.format("%Y%m%d")
+            );
+
+            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+
+            let insert_sql = format!(
+                r#"
+                INSERT INTO `{dest_table}`
+                {parameterized_sql}
+                "#,
+                dest_table = dest_table,
+                parameterized_sql = parameterized_sql,
+            );
+
+            let delete_sql = format!(
+                "DELETE FROM `{}` WHERE TRUE",
+                dest_table
+            );
+
+            self.client.execute_query(&delete_sql).await?;
+            self.client.execute_query(&insert_sql).await?;
+
+            if !after_checks.is_empty() {
+                let checker = InvariantChecker::new(&self.client, &query_def.destination, partition_date);
+                let results = checker.run_checks(&after_checks).await?;
+                invariant_report.after = results;
+            }
+        } else {
+            let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
+
+            let dest_table = format!(
+                "{}.{}${}",
+                query_def.destination.dataset,
+                query_def.destination.table,
+                partition_date.format("%Y%m%d")
+            );
+
+            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+
+            let insert_sql = format!(
+                r#"
+                INSERT INTO `{dest_table}`
+                {parameterized_sql}
+                "#,
+                dest_table = dest_table,
+                parameterized_sql = parameterized_sql,
+            );
+
+            let delete_sql = format!(
+                "DELETE FROM `{}` WHERE TRUE",
+                dest_table
+            );
+
+            self.client.execute_query(&delete_sql).await?;
+            self.client.execute_query(&insert_sql).await?;
+        }
 
         Ok(WriteStats {
             query_name: query_def.name.clone(),
@@ -130,6 +259,7 @@ impl PartitionWriter {
             partition_date,
             rows_written: None,
             bytes_processed: None,
+            invariant_report: if run_invariants { Some(invariant_report) } else { None },
         })
     }
 }

@@ -44,6 +44,9 @@ pub enum BqDriftError {
     #[error("Cluster error: {0}")]
     Cluster(String),
 
+    #[error("Invariant check failed: {0}")]
+    InvariantFailed(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

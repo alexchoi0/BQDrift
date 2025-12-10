@@ -1,0 +1,71 @@
+name: query_with_invariants
+destination:
+  dataset: test_dataset
+  table: invariant_test
+  partition:
+    field: date
+    type: DAY
+
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    sql: simple_query.v1.sql
+    schema:
+      - name: date
+        type: DATE
+      - name: region
+        type: STRING
+      - name: count
+        type: INT64
+
+    invariants:
+      before:
+        - name: source_data_check
+          type: zero_rows
+          source-inline: |
+            SELECT 1 WHERE FALSE
+          severity: error
+      after:
+        - name: min_rows
+          type: row_count
+          min: 10
+          severity: error
+        - name: null_check
+          type: null_percentage
+          column: region
+          max_percentage: 5.0
+          severity: warning
+        - name: count_positive
+          type: column_check
+          column: count
+          check: "MIN({column}) >= 0"
+          severity: error
+        - name: region_cardinality
+          type: distinct_count
+          column: region
+          min: 1
+          max: 100
+          severity: warning
+
+  - version: 2
+    effective_from: 2024-06-01
+    sql: simple_query.v1.sql
+    schema: ${{ versions.1.schema }}
+
+    invariants:
+      base: ${{ versions.1.invariants }}
+      add:
+        after:
+          - name: new_check
+            type: row_count
+            max: 1000000
+            severity: warning
+      modify:
+        after:
+          - name: min_rows
+            type: row_count
+            min: 100
+            severity: error
+      remove:
+        after:
+          - null_check

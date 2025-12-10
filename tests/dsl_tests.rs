@@ -1,5 +1,6 @@
 use bqdrift::dsl::QueryLoader;
-use bqdrift::BqType;
+use bqdrift::{BqType, Severity};
+use bqdrift::invariant::InvariantCheck;
 use chrono::NaiveDate;
 use std::path::Path;
 
@@ -177,7 +178,7 @@ fn test_load_directory() {
 
     assert!(queries.is_ok());
     let queries = queries.unwrap();
-    assert_eq!(queries.len(), 2);
+    assert_eq!(queries.len(), 3);
 }
 
 #[test]
@@ -240,4 +241,171 @@ fn test_sql_dependencies_auto_extracted() {
     assert!(!v1.dependencies.is_empty());
     // Should contain raw.events table from the SQL
     assert!(v1.dependencies.iter().any(|d| d.contains("raw.events") || d.contains("events")));
+}
+
+#[test]
+fn test_load_query_with_invariants() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml"));
+
+    assert!(query.is_ok());
+    let query = query.unwrap();
+    assert_eq!(query.name, "query_with_invariants");
+    assert_eq!(query.versions.len(), 2);
+}
+
+#[test]
+fn test_invariants_v1_before_checks() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    assert_eq!(v1.invariants.before.len(), 1);
+
+    let check = &v1.invariants.before[0];
+    assert_eq!(check.name, "source_data_check");
+    assert_eq!(check.severity, Severity::Error);
+    match &check.check {
+        InvariantCheck::ZeroRows { .. } => {}
+        _ => panic!("Expected ZeroRows check"),
+    }
+}
+
+#[test]
+fn test_invariants_v1_after_checks() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    assert_eq!(v1.invariants.after.len(), 4);
+
+    let names: Vec<_> = v1.invariants.after.iter().map(|i| i.name.as_str()).collect();
+    assert!(names.contains(&"min_rows"));
+    assert!(names.contains(&"null_check"));
+    assert!(names.contains(&"count_positive"));
+    assert!(names.contains(&"region_cardinality"));
+}
+
+#[test]
+fn test_invariants_row_count_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    let min_rows = v1.invariants.after.iter().find(|i| i.name == "min_rows").unwrap();
+
+    match &min_rows.check {
+        InvariantCheck::RowCount { min, max, .. } => {
+            assert_eq!(*min, Some(10));
+            assert_eq!(*max, None);
+        }
+        _ => panic!("Expected RowCount check"),
+    }
+}
+
+#[test]
+fn test_invariants_null_percentage_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    let null_check = v1.invariants.after.iter().find(|i| i.name == "null_check").unwrap();
+
+    assert_eq!(null_check.severity, Severity::Warning);
+    match &null_check.check {
+        InvariantCheck::NullPercentage { column, max_percentage, .. } => {
+            assert_eq!(column, "region");
+            assert!((max_percentage - 5.0).abs() < 0.001);
+        }
+        _ => panic!("Expected NullPercentage check"),
+    }
+}
+
+#[test]
+fn test_invariants_column_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    let count_positive = v1.invariants.after.iter().find(|i| i.name == "count_positive").unwrap();
+
+    match &count_positive.check {
+        InvariantCheck::ColumnCheck { column, check, .. } => {
+            assert_eq!(column, "count");
+            assert!(check.contains("MIN({column}) >= 0"));
+        }
+        _ => panic!("Expected ColumnCheck"),
+    }
+}
+
+#[test]
+fn test_invariants_distinct_count_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    let cardinality = v1.invariants.after.iter().find(|i| i.name == "region_cardinality").unwrap();
+
+    match &cardinality.check {
+        InvariantCheck::DistinctCount { column, min, max, .. } => {
+            assert_eq!(column, "region");
+            assert_eq!(*min, Some(1));
+            assert_eq!(*max, Some(100));
+        }
+        _ => panic!("Expected DistinctCount check"),
+    }
+}
+
+#[test]
+fn test_invariants_v2_extended() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+
+    // Before checks should be inherited from v1
+    assert_eq!(v2.invariants.before.len(), 1);
+
+    // After checks: 4 from v1 - 1 removed (null_check) + 1 added (new_check) = 4
+    assert_eq!(v2.invariants.after.len(), 4);
+
+    let names: Vec<_> = v2.invariants.after.iter().map(|i| i.name.as_str()).collect();
+    assert!(names.contains(&"min_rows"));
+    assert!(names.contains(&"count_positive"));
+    assert!(names.contains(&"region_cardinality"));
+    assert!(names.contains(&"new_check"));
+    assert!(!names.contains(&"null_check"));
+}
+
+#[test]
+fn test_invariants_v2_modified_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+    let min_rows = v2.invariants.after.iter().find(|i| i.name == "min_rows").unwrap();
+
+    match &min_rows.check {
+        InvariantCheck::RowCount { min, .. } => {
+            assert_eq!(*min, Some(100));
+        }
+        _ => panic!("Expected RowCount check"),
+    }
+}
+
+#[test]
+fn test_invariants_v2_added_check() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
+
+    let v2 = &query.versions[1];
+    let new_check = v2.invariants.after.iter().find(|i| i.name == "new_check").unwrap();
+
+    assert_eq!(new_check.severity, Severity::Warning);
+    match &new_check.check {
+        InvariantCheck::RowCount { max, .. } => {
+            assert_eq!(*max, Some(1000000));
+        }
+        _ => panic!("Expected RowCount check"),
+    }
 }
