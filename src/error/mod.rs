@@ -1,7 +1,16 @@
+mod bq_error;
+mod parser;
+
 use thiserror::Error;
+
+pub use bq_error::{BigQueryError, QueryErrorLocation};
+pub use parser::{parse_bq_error, ErrorContext};
 
 #[derive(Error, Debug)]
 pub enum BqDriftError {
+    #[error("BigQuery error: {0}")]
+    BigQuery(#[from] BigQueryError),
+
     #[error("BigQuery client error: {0}")]
     Client(String),
 
