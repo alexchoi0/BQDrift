@@ -38,3 +38,13 @@ versions:
         - name: session_count
           type: INT64
           nullable: true
+
+  - version: 4
+    effective_from: 2024-09-01
+    sql: versioned_query.v4.sql
+    schema:
+      base: ${{ versions.3.schema }}
+      modify:
+        - name: events
+          type: FLOAT64
+          nullable: true
