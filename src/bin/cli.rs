@@ -446,6 +446,13 @@ fn cmd_show(
         for field in &version.schema.fields {
             println!("    - {}: {:?}", field.name, field.field_type);
         }
+
+        if !version.dependencies.is_empty() {
+            println!("  dependencies (auto-detected):");
+            for dep in &version.dependencies {
+                println!("    - {}", dep);
+            }
+        }
     }
 
     if let Some(v) = version_num {

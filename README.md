@@ -368,30 +368,32 @@ queries/
 
 ## DAG Dependencies
 
-Define query dependencies for cascade detection:
+Dependencies are **automatically extracted** from SQL by parsing the AST. No manual `depends_on` configuration needed.
 
-```yaml
-name: weekly_summary
-destination:
-  dataset: analytics
-  table: weekly_summary
-  partition:
-    field: week_start
-    type: DAY
+```sql
+-- weekly_summary.v1.sql
+SELECT
+    DATE_TRUNC(date, WEEK) AS week_start,
+    SUM(total_users) AS total_users
+FROM analytics.daily_user_stats  -- auto-detected dependency
+WHERE date >= @partition_date
+GROUP BY 1
+```
 
-depends_on:
-  - analytics.daily_user_stats
-  - analytics.revenue_by_region
+When you run `bqdrift show`, dependencies are displayed:
 
-versions:
-  - version: 1
-    effective_from: 2024-01-01
-    sql: weekly_summary.v1.sql
-    schema:
-      - name: week_start
-        type: DATE
-      - name: total_users
-        type: INT64
+```
+$ bqdrift show weekly_summary
+
+Name: weekly_summary
+...
+Versions:
+  Version 1
+  effective_from: 2024-01-01
+  sql: weekly_summary.v1.sql
+  schema: 2 fields
+  dependencies (auto-detected):
+    - analytics.daily_user_stats
 ```
 
 When upstream queries change, downstream queries are automatically marked as stale.

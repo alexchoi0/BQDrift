@@ -229,3 +229,15 @@ fn test_versioned_query_schema_modify() {
     assert!(v4.schema.has_field("events"));
     assert!(v4.schema.has_field("session_count"));
 }
+
+#[test]
+fn test_sql_dependencies_auto_extracted() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/simple_query.yaml")).unwrap();
+
+    let v1 = &query.versions[0];
+    // Dependencies should be auto-extracted from SQL
+    assert!(!v1.dependencies.is_empty());
+    // Should contain raw.events table from the SQL
+    assert!(v1.dependencies.iter().any(|d| d.contains("raw.events") || d.contains("events")));
+}
