@@ -184,8 +184,40 @@ versions:
 |---------|-------------|
 | `schema: [...]` | Full inline schema |
 | `schema: ${{ versions.1.schema }}` | Reuse schema from version 1 |
-| `schema: { base: ${{ versions.1.schema }}, add: [...] }` | Inherit and add fields |
-| `schema: { base: ${{ versions.1.schema }}, remove: [...] }` | Inherit and remove fields |
+| `schema: { base: ..., add: [...] }` | Inherit and add fields |
+| `schema: { base: ..., modify: [...] }` | Inherit and change field types |
+| `schema: { base: ..., remove: [...] }` | Inherit and remove fields |
+
+### Modifying Column Types
+
+Change a column's type or properties without rewriting the full schema:
+
+```yaml
+versions:
+  - version: 1
+    effective_from: 2024-01-15
+    sql: query.v1.sql
+    schema:
+      - name: date
+        type: DATE
+      - name: count
+        type: INT64
+
+  - version: 2
+    effective_from: 2024-06-01
+    sql: query.v2.sql
+    schema:
+      base: ${{ versions.1.schema }}
+      modify:
+        - name: count
+          type: FLOAT64
+          nullable: true
+      add:
+        - name: avg_duration
+          type: FLOAT64
+```
+
+Operations are applied in order: **remove → modify → add**
 
 ## SQL Revisions
 

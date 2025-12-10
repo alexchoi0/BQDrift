@@ -53,10 +53,19 @@ impl VariableResolver {
 
         let mut fields: Vec<Field> = base_schema.fields.clone();
 
+        // Remove fields
         for name in &ext.remove {
             fields.retain(|f| &f.name != name);
         }
 
+        // Modify existing fields (replace by name)
+        for modified in &ext.modify {
+            if let Some(field) = fields.iter_mut().find(|f| f.name == modified.name) {
+                *field = modified.clone();
+            }
+        }
+
+        // Add new fields
         fields.extend(ext.add.clone());
 
         Ok(Schema::from_fields(fields))
