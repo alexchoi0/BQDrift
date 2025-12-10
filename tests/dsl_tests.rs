@@ -322,7 +322,7 @@ fn test_invariants_null_percentage_check() {
 }
 
 #[test]
-fn test_invariants_column_check() {
+fn test_invariants_value_range_check() {
     let loader = QueryLoader::new();
     let query = loader.load_query(fixtures_path().join("analytics/query_with_invariants.yaml")).unwrap();
 
@@ -330,11 +330,12 @@ fn test_invariants_column_check() {
     let count_positive = v1.invariants.after.iter().find(|i| i.name == "count_positive").unwrap();
 
     match &count_positive.check {
-        InvariantCheck::ColumnCheck { column, check, .. } => {
+        InvariantCheck::ValueRange { column, min, max, .. } => {
             assert_eq!(column, "count");
-            assert!(check.contains("MIN(count) >= 0"));
+            assert_eq!(*min, Some(0.0));
+            assert_eq!(*max, None);
         }
-        _ => panic!("Expected ColumnCheck"),
+        _ => panic!("Expected ValueRange"),
     }
 }
 

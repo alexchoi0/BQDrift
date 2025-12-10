@@ -91,12 +91,15 @@ pub enum InvariantCheck {
         max_percentage: f64,
     },
 
-    /// Column check - runs SQL expression against a column
-    ColumnCheck {
+    /// Value range check - validates min/max values for a column
+    ValueRange {
         #[serde(flatten, default)]
         source: Option<SqlSource>,
         column: String,
-        check: String,
+        #[serde(default)]
+        min: Option<f64>,
+        #[serde(default)]
+        max: Option<f64>,
     },
 
     /// Distinct count check - validates cardinality of a column
@@ -239,21 +242,23 @@ severity: warning
     }
 
     #[test]
-    fn test_parse_column_check() {
+    fn test_parse_value_range() {
         let yaml = r#"
 name: revenue_bounds
-type: column_check
+type: value_range
 column: revenue
-check: "MIN({column}) >= 0"
+min: 0.0
+max: 1000000.0
 severity: warning
 "#;
         let inv: InvariantDef = serde_yaml::from_str(yaml).unwrap();
         match inv.check {
-            InvariantCheck::ColumnCheck { column, check, .. } => {
+            InvariantCheck::ValueRange { column, min, max, .. } => {
                 assert_eq!(column, "revenue");
-                assert_eq!(check, "MIN({column}) >= 0");
+                assert_eq!(min, Some(0.0));
+                assert_eq!(max, Some(1000000.0));
             }
-            _ => panic!("Expected ColumnCheck"),
+            _ => panic!("Expected ValueRange"),
         }
     }
 

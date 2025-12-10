@@ -275,4 +275,51 @@ impl BqClient {
 
         Ok(None)
     }
+
+    /// Execute a query and return two float values from first two columns of the first row.
+    /// Useful for MIN/MAX queries.
+    pub async fn query_two_floats(&self, sql: &str) -> Result<(Option<f64>, Option<f64>)> {
+        let request = QueryRequest::new(sql);
+
+        let result = self.client
+            .job()
+            .query(&self.project_id, request)
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("query_two_floats")
+                    .with_sql(sql);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        let mut first: Option<f64> = None;
+        let mut second: Option<f64> = None;
+
+        if let Some(rows) = result.rows.as_ref() {
+            if let Some(first_row) = rows.first() {
+                if let Some(cells) = first_row.columns.as_ref() {
+                    if let Some(cell) = cells.get(0) {
+                        if let Some(value) = &cell.value {
+                            if let Some(s) = value.as_str() {
+                                first = s.parse::<f64>().ok();
+                            } else if let Some(n) = value.as_f64() {
+                                first = Some(n);
+                            }
+                        }
+                    }
+                    if let Some(cell) = cells.get(1) {
+                        if let Some(value) = &cell.value {
+                            if let Some(s) = value.as_str() {
+                                second = s.parse::<f64>().ok();
+                            } else if let Some(n) = value.as_f64() {
+                                second = Some(n);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok((first, second))
+    }
 }

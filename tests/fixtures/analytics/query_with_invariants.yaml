@@ -36,9 +36,9 @@ versions:
           max_percentage: 5.0
           severity: warning
         - name: count_positive
-          type: column_check
+          type: value_range
           column: count
-          check: "MIN(count) >= 0"
+          min: 0
           severity: error
         - name: region_cardinality
           type: distinct_count

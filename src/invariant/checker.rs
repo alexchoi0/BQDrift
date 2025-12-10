@@ -26,10 +26,11 @@ pub enum ResolvedCheck {
         column: String,
         max_percentage: f64,
     },
-    ColumnCheck {
+    ValueRange {
         source_sql: Option<String>,
         column: String,
-        check: String,
+        min: Option<f64>,
+        max: Option<f64>,
     },
     DistinctCount {
         source_sql: Option<String>,
@@ -80,8 +81,8 @@ impl<'a> InvariantChecker<'a> {
             ResolvedCheck::NullPercentage { source_sql, column, max_percentage } => {
                 self.check_null_percentage(&inv.name, inv.severity, source_sql.as_deref(), column, *max_percentage).await
             }
-            ResolvedCheck::ColumnCheck { source_sql, column, check } => {
-                self.check_column(&inv.name, inv.severity, source_sql.as_deref(), column, check).await
+            ResolvedCheck::ValueRange { source_sql, column, min, max } => {
+                self.check_value_range(&inv.name, inv.severity, source_sql.as_deref(), column, *min, *max).await
             }
             ResolvedCheck::DistinctCount { source_sql, column, min, max } => {
                 self.check_distinct_count(&inv.name, inv.severity, source_sql.as_deref(), column, *min, *max).await
@@ -190,35 +191,43 @@ impl<'a> InvariantChecker<'a> {
         }
     }
 
-    async fn check_column(
+    async fn check_value_range(
         &self,
         name: &str,
         severity: Severity,
         source_sql: Option<&str>,
         column: &str,
-        check_expr: &str,
+        min: Option<f64>,
+        max: Option<f64>,
     ) -> Result<CheckResult> {
         let source = source_sql
             .map(|s| self.resolve_placeholders(s))
             .unwrap_or_else(|| self.default_source_sql());
 
-        let resolved_check = check_expr.replace("{column}", column);
-
         let check_sql = format!(
-            "SELECT CASE WHEN {} THEN 1 ELSE 0 END as result FROM ({}) _source",
-            resolved_check, source
+            "SELECT MIN({}) as min_val, MAX({}) as max_val FROM ({}) _source",
+            column, column, source
         );
 
-        let result = self.client.query_single_int(&check_sql).await?.unwrap_or(0);
+        let (min_val, max_val) = self.client.query_two_floats(&check_sql).await?;
 
-        if result == 1 {
-            Ok(CheckResult::passed(name, severity, format!("Column check passed: {}", resolved_check)))
+        let mut violations = Vec::new();
+        if let (Some(threshold), Some(actual)) = (min, min_val) {
+            if actual < threshold {
+                violations.push(format!("min value {} < threshold {}", actual, threshold));
+            }
+        }
+        if let (Some(threshold), Some(actual)) = (max, max_val) {
+            if actual > threshold {
+                violations.push(format!("max value {} > threshold {}", actual, threshold));
+            }
+        }
+
+        if violations.is_empty() {
+            Ok(CheckResult::passed(name, severity, format!("Value range for {}: [{:?}, {:?}]", column, min_val, max_val)))
         } else {
-            Ok(CheckResult::failed(
-                name,
-                severity,
-                format!("Column check failed: {}", resolved_check),
-            ).with_details(format!("Column: {}, Expression: {}", column, resolved_check)))
+            Ok(CheckResult::failed(name, severity, violations.join(", "))
+                .with_details(format!("Column: {}, Actual range: [{:?}, {:?}]", column, min_val, max_val)))
         }
     }
 
@@ -309,15 +318,16 @@ fn resolve_check(check: &InvariantCheck) -> ResolvedCheck {
                 max_percentage: *max_percentage,
             }
         }
-        InvariantCheck::ColumnCheck { source, column, check } => {
+        InvariantCheck::ValueRange { source, column, min, max } => {
             let source_sql = source.as_ref().map(|s| match s {
                 SqlSource::Source(path) => path.clone(),
                 SqlSource::SourceInline(sql) => sql.clone(),
             });
-            ResolvedCheck::ColumnCheck {
+            ResolvedCheck::ValueRange {
                 source_sql,
                 column: column.clone(),
-                check: check.clone(),
+                min: *min,
+                max: *max,
             }
         }
         InvariantCheck::DistinctCount { source, column, min, max } => {

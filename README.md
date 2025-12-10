@@ -307,9 +307,9 @@ versions:
           severity: warning
 
         - name: count_positive
-          type: column_check
+          type: value_range
           column: total_events
-          check: "MIN(total_events) >= 0"
+          min: 0
           severity: error
 
         - name: region_cardinality
@@ -327,7 +327,7 @@ versions:
 | `zero_rows` | Pass if query returns 0 rows | `source` or `source-inline` |
 | `row_count` | Validate row count bounds | `min`, `max`, optional `source` |
 | `null_percentage` | Check % of nulls in column | `column`, `max_percentage` |
-| `column_check` | Run SQL expression on column | `column`, `check` expression |
+| `value_range` | Validate min/max values for column | `column`, `min`, `max` |
 | `distinct_count` | Validate column cardinality | `column`, `min`, `max` |
 
 ### Severity Levels

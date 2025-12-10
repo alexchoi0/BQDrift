@@ -201,15 +201,16 @@ impl QueryLoader {
                     };
                 }
             }
-            InvariantCheck::ColumnCheck { source, column, check } => {
+            InvariantCheck::ValueRange { source, column, min, max } => {
                 if let Some(SqlSource::Source(path)) = source {
                     let sql_path = base_dir.join(path);
                     let content = fs::read_to_string(&sql_path)
                         .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
-                    inv.check = InvariantCheck::ColumnCheck {
+                    inv.check = InvariantCheck::ValueRange {
                         source: Some(SqlSource::SourceInline(content)),
                         column: column.clone(),
-                        check: check.clone(),
+                        min: *min,
+                        max: *max,
                     };
                 }
             }
