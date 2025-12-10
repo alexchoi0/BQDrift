@@ -6,7 +6,7 @@ use gcp_bigquery_client::model::table_field_schema::TableFieldSchema;
 use gcp_bigquery_client::model::table_schema::TableSchema;
 use gcp_bigquery_client::model::time_partitioning::TimePartitioning;
 use gcp_bigquery_client::model::clustering::Clustering;
-use crate::error::{BqDriftError, Result};
+use crate::error::{BqDriftError, Result, parse_bq_error, ErrorContext};
 use crate::schema::{BqType, Field, FieldMode, Schema, PartitionConfig, PartitionType, ClusterConfig};
 use crate::dsl::QueryDef;
 
@@ -19,7 +19,10 @@ impl BqClient {
     pub async fn new(project_id: impl Into<String>) -> Result<Self> {
         let client = Client::from_application_default_credentials()
             .await
-            .map_err(|e| BqDriftError::Client(e.to_string()))?;
+            .map_err(|e| {
+                let ctx = ErrorContext::new().with_operation("client_init");
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
 
         Ok(Self {
             client,
@@ -51,7 +54,12 @@ impl BqClient {
             .table()
             .create(table)
             .await
-            .map_err(|e| BqDriftError::Client(e.to_string()))?;
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("create_table")
+                    .with_table(&self.project_id, &query_def.destination.dataset, &query_def.destination.table);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
 
         Ok(())
     }
@@ -63,7 +71,12 @@ impl BqClient {
             .job()
             .query(&self.project_id, request)
             .await
-            .map_err(|e| BqDriftError::Client(e.to_string()))?;
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("execute_query")
+                    .with_sql(sql);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
 
         Ok(())
     }

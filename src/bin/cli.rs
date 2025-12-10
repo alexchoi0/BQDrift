@@ -7,6 +7,7 @@ use tracing_subscriber::EnvFilter;
 
 use bqdrift::{QueryLoader, QueryValidator, Runner};
 use bqdrift::executor::BqClient;
+use bqdrift::error::{BqDriftError, BigQueryError};
 
 #[derive(Parser)]
 #[command(name = "bqdrift")]
@@ -110,10 +111,31 @@ async fn main() -> ExitCode {
     match run(cli).await {
         Ok(_) => ExitCode::SUCCESS,
         Err(e) => {
-            error!("{}", e);
+            print_error(e);
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_error(err: Box<dyn std::error::Error>) {
+    if let Some(bq_err) = err.downcast_ref::<BqDriftError>() {
+        if let BqDriftError::BigQuery(bq) = bq_err {
+            print_bq_error(bq);
+            return;
+        }
+    }
+
+    eprintln!("\x1b[31m✗ Error:\x1b[0m {}", err);
+}
+
+fn print_bq_error(err: &BigQueryError) {
+    eprintln!("\n\x1b[31m✗ BigQuery Error [{}]\x1b[0m", err.error_code());
+    eprintln!("  {}", err);
+    eprintln!("\n\x1b[33mSuggestion:\x1b[0m");
+    for line in err.suggestion().lines() {
+        eprintln!("  {}", line);
+    }
+    eprintln!();
 }
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -323,7 +345,7 @@ async fn cmd_run(
             }
 
             for failure in &report.failures {
-                println!("✗ {}: {}", failure.query_name, failure.error);
+                eprintln!("\x1b[31m✗\x1b[0m {} ({}): {}", failure.query_name, failure.partition_date, failure.error);
             }
 
             println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
@@ -374,7 +396,7 @@ async fn cmd_backfill(
     }
 
     for failure in &report.failures {
-        println!("✗ {}: {}", failure.partition_date, failure.error);
+        eprintln!("\x1b[31m✗\x1b[0m {}: {}", failure.partition_date, failure.error);
     }
 
     println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
