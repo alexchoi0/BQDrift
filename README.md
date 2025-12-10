@@ -57,7 +57,7 @@ bqdrift --project my-gcp-project init --dataset bqdrift
 
 | Command | Description |
 |---------|-------------|
-| `validate` | Validate all query YAML and SQL files |
+| `validate` | Validate queries with comprehensive checks |
 | `list` | List all queries with versions |
 | `show <query>` | Show detailed query info and schema |
 | `run` | Run queries for a specific date |
@@ -71,6 +71,30 @@ bqdrift --project my-gcp-project init --dataset bqdrift
 ### Environment Variables
 
 - `GCP_PROJECT_ID` - Default GCP project (alternative to `--project`)
+
+### Validation Checks
+
+The `validate` command performs comprehensive validation:
+
+**Errors (fail validation):**
+
+| Code | Description |
+|------|-------------|
+| E001 | Partition field not found in schema |
+| E002 | Cluster field not found in schema |
+| E003 | Duplicate version number |
+| E004 | RECORD field missing nested fields |
+
+**Warnings (pass with warnings):**
+
+| Code | Description |
+|------|-------------|
+| W001 | `effective_from` dates not in chronological order |
+| W002 | Duplicate revision number within a version |
+| W003 | Field removed between versions (breaking change) |
+| W004 | Field type changed between versions |
+| W005 | SQL missing `@partition_date` placeholder |
+| W006 | Schema has no fields |
 
 ## Quick Start
 

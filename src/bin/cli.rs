@@ -5,7 +5,7 @@ use std::process::ExitCode;
 use tracing::{info, error, warn};
 use tracing_subscriber::EnvFilter;
 
-use bqdrift::{QueryLoader, Runner};
+use bqdrift::{QueryLoader, QueryValidator, Runner};
 use bqdrift::executor::BqClient;
 
 #[derive(Parser)]
@@ -156,9 +156,22 @@ fn cmd_validate(loader: &QueryLoader, queries_path: &PathBuf) -> Result<(), Box<
 
     let queries = loader.load_dir(queries_path)?;
 
-    for query in &queries {
-        println!("✓ {}", query.name);
+    let mut total_errors = 0;
+    let mut total_warnings = 0;
+    let mut failed_queries = Vec::new();
 
+    for query in &queries {
+        let result = QueryValidator::validate(&query);
+
+        let status = if result.is_valid() {
+            if result.has_warnings() { "⚠" } else { "✓" }
+        } else {
+            "✗"
+        };
+
+        println!("{} {}", status, query.name);
+
+        // Show version summary
         for version in &query.versions {
             let schema_fields = version.schema.fields.len();
             let revisions = version.sql_revisions.len();
@@ -169,9 +182,38 @@ fn cmd_validate(loader: &QueryLoader, queries_path: &PathBuf) -> Result<(), Box<
                 println!("  v{}: {} fields", version.version, schema_fields);
             }
         }
+
+        // Show errors
+        for err in &result.errors {
+            println!("    {} [{}] {}", "\x1b[31m✗\x1b[0m", err.code, err.message);
+        }
+
+        // Show warnings
+        for warn in &result.warnings {
+            println!("    {} [{}] {}", "\x1b[33m⚠\x1b[0m", warn.code, warn.message);
+        }
+
+        total_errors += result.errors.len();
+        total_warnings += result.warnings.len();
+
+        if !result.is_valid() {
+            failed_queries.push(query.name.clone());
+        }
     }
 
-    println!("\n✓ {} queries validated successfully", queries.len());
+    println!();
+
+    if total_errors > 0 {
+        println!("✗ Validation failed: {} errors, {} warnings in {} queries",
+            total_errors, total_warnings, queries.len());
+        println!("  Failed: {}", failed_queries.join(", "));
+        return Err("Validation failed".into());
+    } else if total_warnings > 0 {
+        println!("⚠ {} queries validated with {} warnings", queries.len(), total_warnings);
+    } else {
+        println!("✓ {} queries validated successfully", queries.len());
+    }
+
     Ok(())
 }
 
