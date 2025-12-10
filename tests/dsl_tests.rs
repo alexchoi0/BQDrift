@@ -332,7 +332,7 @@ fn test_invariants_column_check() {
     match &count_positive.check {
         InvariantCheck::ColumnCheck { column, check, .. } => {
             assert_eq!(column, "count");
-            assert!(check.contains("MIN({column}) >= 0"));
+            assert!(check.contains("MIN(count) >= 0"));
         }
         _ => panic!("Expected ColumnCheck"),
     }

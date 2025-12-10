@@ -309,7 +309,7 @@ versions:
         - name: count_positive
           type: column_check
           column: total_events
-          check: "MIN({column}) >= 0"
+          check: "MIN(total_events) >= 0"
           severity: error
 
         - name: region_cardinality
@@ -357,7 +357,6 @@ versions:
 |-------------|-------------|
 | `@partition_date` | The partition date being processed |
 | `{destination}` | Full table path (`dataset.table`) |
-| `{column}` | Column name (for `column_check`) |
 
 ### Invariant Inheritance
 

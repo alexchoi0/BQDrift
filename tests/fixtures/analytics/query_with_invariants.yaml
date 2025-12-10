@@ -38,7 +38,7 @@ versions:
         - name: count_positive
           type: column_check
           column: count
-          check: "MIN({column}) >= 0"
+          check: "MIN(count) >= 0"
           severity: error
         - name: region_cardinality
           type: distinct_count
