@@ -394,10 +394,74 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_query_location_no_match() {
+        let msg = "Some error without location info";
+        assert!(extract_query_location(msg).is_none());
+    }
+
+    #[test]
+    fn test_extract_query_location_large_numbers() {
+        let msg = "Error at [999:1234]";
+        let loc = extract_query_location(msg).unwrap();
+        assert_eq!(loc.line, Some(999));
+        assert_eq!(loc.column, Some(1234));
+    }
+
+    #[test]
     fn test_extract_required_permission() {
         let msg = "Access denied: User does not have bigquery.tables.getData permission";
         let perm = extract_required_permission(msg).unwrap();
         assert_eq!(perm, "bigquery.tables.getData");
+    }
+
+    #[test]
+    fn test_extract_required_permission_jobs() {
+        let msg = "Permission bigquery.jobs.create denied";
+        let perm = extract_required_permission(msg).unwrap();
+        assert_eq!(perm, "bigquery.jobs.create");
+    }
+
+    #[test]
+    fn test_extract_required_permission_no_match() {
+        let msg = "Access denied for unknown reason";
+        assert!(extract_required_permission(msg).is_none());
+    }
+
+    #[test]
+    fn test_extract_quota_type_concurrent() {
+        assert_eq!(
+            extract_quota_type("Too many concurrent queries"),
+            Some("concurrent queries".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_quota_type_daily() {
+        assert_eq!(
+            extract_quota_type("Daily limit exceeded"),
+            Some("daily query limit".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_quota_type_rate() {
+        assert_eq!(
+            extract_quota_type("Rate limit exceeded"),
+            Some("rate limit".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_quota_type_bytes() {
+        assert_eq!(
+            extract_quota_type("Bytes billed exceeds limit"),
+            Some("bytes scanned".to_string())
+        );
+    }
+
+    #[test]
+    fn test_extract_quota_type_unknown() {
+        assert!(extract_quota_type("Some other quota issue").is_none());
     }
 
     #[test]
@@ -406,5 +470,109 @@ mod tests {
         let ctx = ErrorContext::new().with_sql(long_sql);
         assert!(ctx.sql.as_ref().unwrap().len() <= 503); // 500 + "..."
         assert!(ctx.sql.as_ref().unwrap().ends_with("..."));
+    }
+
+    #[test]
+    fn test_error_context_short_sql_not_truncated() {
+        let short_sql = "SELECT * FROM table";
+        let ctx = ErrorContext::new().with_sql(short_sql);
+        assert_eq!(ctx.sql.as_ref().unwrap(), "SELECT * FROM table");
+        assert!(!ctx.sql.as_ref().unwrap().ends_with("..."));
+    }
+
+    #[test]
+    fn test_error_context_with_operation() {
+        let ctx = ErrorContext::new().with_operation("execute_query");
+        assert_eq!(ctx.operation, Some("execute_query".to_string()));
+    }
+
+    #[test]
+    fn test_error_context_with_table() {
+        let ctx = ErrorContext::new().with_table("my-project", "my_dataset", "my_table");
+        assert_eq!(ctx.project, Some("my-project".to_string()));
+        assert_eq!(ctx.dataset, Some("my_dataset".to_string()));
+        assert_eq!(ctx.table, Some("my_table".to_string()));
+        assert_eq!(ctx.resource, Some("my-project.my_dataset.my_table".to_string()));
+    }
+
+    #[test]
+    fn test_error_context_builder_chain() {
+        let ctx = ErrorContext::new()
+            .with_operation("create_table")
+            .with_table("proj", "ds", "tbl")
+            .with_sql("CREATE TABLE ...");
+
+        assert_eq!(ctx.operation, Some("create_table".to_string()));
+        assert_eq!(ctx.project, Some("proj".to_string()));
+        assert_eq!(ctx.sql, Some("CREATE TABLE ...".to_string()));
+    }
+
+    #[test]
+    fn test_error_context_default() {
+        let ctx = ErrorContext::default();
+        assert!(ctx.sql.is_none());
+        assert!(ctx.operation.is_none());
+        assert!(ctx.resource.is_none());
+        assert!(ctx.project.is_none());
+        assert!(ctx.dataset.is_none());
+        assert!(ctx.table.is_none());
+    }
+
+    #[test]
+    fn test_parse_not_found_table_from_message() {
+        let msg = "Not found: Table my-project:my_dataset.my_table";
+        let ctx = ErrorContext::new();
+        let err = parse_not_found_error(msg, &ctx);
+
+        if let BigQueryError::TableNotFound { project, dataset, table } = err {
+            assert_eq!(project, "my-project");
+            assert_eq!(dataset, "my_dataset");
+            assert_eq!(table, "my_table");
+        } else {
+            panic!("Expected TableNotFound, got {:?}", err);
+        }
+    }
+
+    #[test]
+    fn test_parse_not_found_dataset_from_message() {
+        let msg = "Not found: Dataset my-project:my_dataset";
+        let ctx = ErrorContext::new();
+        let err = parse_not_found_error(msg, &ctx);
+
+        if let BigQueryError::DatasetNotFound { project, dataset } = err {
+            assert_eq!(project, "my-project");
+            assert_eq!(dataset, "my_dataset");
+        } else {
+            panic!("Expected DatasetNotFound, got {:?}", err);
+        }
+    }
+
+    #[test]
+    fn test_parse_not_found_table_from_context() {
+        let msg = "Table not found";
+        let ctx = ErrorContext::new()
+            .with_table("ctx-project", "ctx_dataset", "ctx_table");
+        let err = parse_not_found_error(msg, &ctx);
+
+        if let BigQueryError::TableNotFound { project, dataset, table } = err {
+            assert_eq!(project, "ctx-project");
+            assert_eq!(dataset, "ctx_dataset");
+            assert_eq!(table, "ctx_table");
+        } else {
+            panic!("Expected TableNotFound, got {:?}", err);
+        }
+    }
+
+    #[test]
+    fn test_parse_not_found_generic() {
+        let msg = "Resource unavailable";
+        let ctx = ErrorContext::new();
+        let err = parse_not_found_error(msg, &ctx);
+
+        if let BigQueryError::Unknown { code, .. } = err {
+            assert_eq!(code, Some("notFound".to_string()));
+        } else {
+            panic!("Expected Unknown, got {:?}", err);
+        }
     }
 }
