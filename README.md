@@ -286,12 +286,11 @@ versions:
     invariants:
       before:
         - name: source_has_data
-          type: zero_rows
+          type: row_count
           source-inline: |
-            SELECT 1 WHERE NOT EXISTS (
-              SELECT 1 FROM raw.events
-              WHERE DATE(created_at) = @partition_date
-            )
+            SELECT 1 FROM raw.events
+            WHERE DATE(created_at) = @partition_date
+          min: 1
           severity: error
 
       after:
@@ -324,7 +323,6 @@ versions:
 
 | Type | Description | Parameters |
 |------|-------------|------------|
-| `zero_rows` | Pass if query returns 0 rows | `source` or `source-inline` |
 | `row_count` | Validate row count bounds | `min`, `max`, optional `source` |
 | `null_percentage` | Check % of nulls in column | `column`, `max_percentage` |
 | `value_range` | Validate min/max values for column | `column`, `min`, `max` |
@@ -342,13 +340,16 @@ versions:
 ```yaml
 # File path (relative to YAML)
 - name: check1
-  type: zero_rows
+  type: row_count
   source: checks/my_check.sql
+  min: 1
 
 # Inline SQL
 - name: check2
-  type: zero_rows
-  source-inline: SELECT 1 WHERE FALSE
+  type: row_count
+  source-inline: SELECT * FROM my_table WHERE status = 'active'
+  min: 10
+  max: 1000
 ```
 
 ### SQL Placeholders

@@ -13,9 +13,6 @@ pub struct ResolvedInvariant {
 }
 
 pub enum ResolvedCheck {
-    ZeroRows {
-        sql_content: String,
-    },
     RowCount {
         source_sql: Option<String>,
         min: Option<i64>,
@@ -72,9 +69,6 @@ impl<'a> InvariantChecker<'a> {
 
     async fn run_check(&self, inv: &ResolvedInvariant) -> Result<CheckResult> {
         match &inv.check {
-            ResolvedCheck::ZeroRows { sql_content } => {
-                self.check_zero_rows(&inv.name, inv.severity, sql_content).await
-            }
             ResolvedCheck::RowCount { source_sql, min, max } => {
                 self.check_row_count(&inv.name, inv.severity, source_sql.as_deref(), *min, *max).await
             }
@@ -107,23 +101,6 @@ impl<'a> InvariantChecker<'a> {
     fn resolve_placeholders(&self, sql: &str) -> String {
         sql.replace("{destination}", &self.destination_table())
            .replace("@partition_date", &format!("'{}'", self.partition_date))
-    }
-
-    async fn check_zero_rows(
-        &self,
-        name: &str,
-        severity: Severity,
-        sql_content: &str,
-    ) -> Result<CheckResult> {
-        let sql = self.resolve_placeholders(sql_content);
-        let count = self.client.query_row_count(&sql).await?;
-
-        if count == 0 {
-            Ok(CheckResult::passed(name, severity, "Query returned 0 rows"))
-        } else {
-            Ok(CheckResult::failed(name, severity, format!("Query returned {} rows (expected 0)", count))
-                .with_details(format!("Violation count: {}", count)))
-        }
     }
 
     async fn check_row_count(
@@ -289,13 +266,6 @@ fn resolve_invariant_def(inv: &InvariantDef) -> ResolvedInvariant {
 
 fn resolve_check(check: &InvariantCheck) -> ResolvedCheck {
     match check {
-        InvariantCheck::ZeroRows { source } => {
-            let sql_content = match source {
-                SqlSource::Source(path) => path.clone(),
-                SqlSource::SourceInline(sql) => sql.clone(),
-            };
-            ResolvedCheck::ZeroRows { sql_content }
-        }
         InvariantCheck::RowCount { source, min, max } => {
             let source_sql = source.as_ref().map(|s| match s {
                 SqlSource::Source(path) => path.clone(),

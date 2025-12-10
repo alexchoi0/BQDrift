@@ -67,12 +67,6 @@ pub struct InvariantDef {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InvariantCheck {
-    /// Pure SQL assertion - passes if query returns 0 rows
-    ZeroRows {
-        #[serde(flatten)]
-        source: SqlSource,
-    },
-
     /// Row count check - validates min/max row counts
     RowCount {
         #[serde(flatten, default)]
@@ -143,44 +137,6 @@ impl std::fmt::Display for Severity {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_parse_zero_rows_with_source_file() {
-        let yaml = r#"
-name: source_has_data
-type: zero_rows
-source: checks/source_check.sql
-severity: error
-"#;
-        let inv: InvariantDef = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(inv.name, "source_has_data");
-        assert_eq!(inv.severity, Severity::Error);
-        match inv.check {
-            InvariantCheck::ZeroRows { source: SqlSource::Source(path) } => {
-                assert_eq!(path, "checks/source_check.sql");
-            }
-            _ => panic!("Expected ZeroRows with Source"),
-        }
-    }
-
-    #[test]
-    fn test_parse_zero_rows_with_inline_sql() {
-        let yaml = r#"
-name: quick_check
-type: zero_rows
-source-inline: "SELECT 1 WHERE FALSE"
-severity: warning
-"#;
-        let inv: InvariantDef = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(inv.name, "quick_check");
-        assert_eq!(inv.severity, Severity::Warning);
-        match inv.check {
-            InvariantCheck::ZeroRows { source: SqlSource::SourceInline(sql) } => {
-                assert_eq!(sql, "SELECT 1 WHERE FALSE");
-            }
-            _ => panic!("Expected ZeroRows with SourceInline"),
-        }
-    }
 
     #[test]
     fn test_parse_row_count_no_source() {
@@ -288,8 +244,9 @@ severity: warning
         let yaml = r#"
 before:
   - name: source_check
-    type: zero_rows
+    type: row_count
     source: checks/source.sql
+    max: 0
     severity: error
 after:
   - name: row_count
@@ -393,8 +350,9 @@ base: "${{ versions.1.invariants }}"
 add:
   before:
     - name: pre_check
-      type: zero_rows
+      type: row_count
       source: checks/pre.sql
+      max: 0
       severity: error
 "#;
         let inv_ref: InvariantsRef = serde_yaml::from_str(yaml).unwrap();

@@ -266,8 +266,10 @@ fn test_invariants_v1_before_checks() {
     assert_eq!(check.name, "source_data_check");
     assert_eq!(check.severity, Severity::Error);
     match &check.check {
-        InvariantCheck::ZeroRows { .. } => {}
-        _ => panic!("Expected ZeroRows check"),
+        InvariantCheck::RowCount { max, .. } => {
+            assert_eq!(*max, Some(0));
+        }
+        _ => panic!("Expected RowCount check"),
     }
 }
 

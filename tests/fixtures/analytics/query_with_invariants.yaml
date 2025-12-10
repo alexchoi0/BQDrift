@@ -21,9 +21,10 @@ versions:
     invariants:
       before:
         - name: source_data_check
-          type: zero_rows
+          type: row_count
           source-inline: |
             SELECT 1 WHERE FALSE
+          max: 0
           severity: error
       after:
         - name: min_rows

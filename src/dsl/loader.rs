@@ -167,16 +167,6 @@ impl QueryLoader {
         base_dir: &Path,
     ) -> Result<()> {
         match &inv.check {
-            InvariantCheck::ZeroRows { source } => {
-                if let SqlSource::Source(path) = source {
-                    let sql_path = base_dir.join(path);
-                    let content = fs::read_to_string(&sql_path)
-                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
-                    inv.check = InvariantCheck::ZeroRows {
-                        source: SqlSource::SourceInline(content),
-                    };
-                }
-            }
             InvariantCheck::RowCount { source, min, max } => {
                 if let Some(SqlSource::Source(path)) = source {
                     let sql_path = base_dir.join(path);
