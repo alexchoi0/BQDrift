@@ -11,6 +11,7 @@ bqdrift manages versioned OLAP queries for BigQuery with:
 - **Partition management** - Hourly jobs overwrite daily partitions
 - **Backfill support** - Rewrite historical partitions when bugs are found
 - **YAML DSL** - Define queries in readable YAML with SQL files
+- **Invariant checks** - Validate data quality before/after execution
 - **Drift detection** - Automatically detect when queries need re-running
 - **DAG dependencies** - Cascade re-runs to downstream queries
 
@@ -62,6 +63,7 @@ bqdrift --project my-gcp-project init --dataset bqdrift
 | `show <query>` | Show detailed query info and schema |
 | `run` | Run queries for a specific date |
 | `backfill <query>` | Backfill a query for a date range |
+| `check <query>` | Run invariant checks only (no query execution) |
 | `status` | Show drift status (what needs re-running) |
 | `sync` | Re-run drifted partitions |
 | `graph` | Show query dependency graph |
@@ -269,6 +271,147 @@ versions:
 1. Find version where `effective_from <= partition_date`
 2. Within that version, find latest revision where `effective_from <= today`
 3. Use that SQL file
+
+## Invariant Checks
+
+Validate data quality with invariant checks that run **before** and/or **after** query execution:
+
+```yaml
+versions:
+  - version: 1
+    effective_from: 2024-01-15
+    sql: daily_user_stats.v1.sql
+    schema: [...]
+
+    invariants:
+      before:
+        - name: source_has_data
+          type: zero_rows
+          source-inline: |
+            SELECT 1 WHERE NOT EXISTS (
+              SELECT 1 FROM raw.events
+              WHERE DATE(created_at) = @partition_date
+            )
+          severity: error
+
+      after:
+        - name: min_rows
+          type: row_count
+          min: 100
+          severity: error
+
+        - name: null_check
+          type: null_percentage
+          column: user_id
+          max_percentage: 5.0
+          severity: warning
+
+        - name: count_positive
+          type: column_check
+          column: total_events
+          check: "MIN({column}) >= 0"
+          severity: error
+
+        - name: region_cardinality
+          type: distinct_count
+          column: region
+          min: 1
+          max: 100
+          severity: warning
+```
+
+### Check Types
+
+| Type | Description | Parameters |
+|------|-------------|------------|
+| `zero_rows` | Pass if query returns 0 rows | `source` or `source-inline` |
+| `row_count` | Validate row count bounds | `min`, `max`, optional `source` |
+| `null_percentage` | Check % of nulls in column | `column`, `max_percentage` |
+| `column_check` | Run SQL expression on column | `column`, `check` expression |
+| `distinct_count` | Validate column cardinality | `column`, `min`, `max` |
+
+### Severity Levels
+
+| Severity | Before Check Fails | After Check Fails |
+|----------|-------------------|-------------------|
+| `error` | Skip query execution | Mark run as failed |
+| `warning` | Log warning, continue | Log warning, continue |
+
+### SQL Source Options
+
+```yaml
+# File path (relative to YAML)
+- name: check1
+  type: zero_rows
+  source: checks/my_check.sql
+
+# Inline SQL
+- name: check2
+  type: zero_rows
+  source-inline: SELECT 1 WHERE FALSE
+```
+
+### SQL Placeholders
+
+| Placeholder | Description |
+|-------------|-------------|
+| `@partition_date` | The partition date being processed |
+| `{destination}` | Full table path (`dataset.table`) |
+| `{column}` | Column name (for `column_check`) |
+
+### Invariant Inheritance
+
+Like schemas, invariants support inheritance:
+
+```yaml
+versions:
+  - version: 1
+    invariants:
+      after:
+        - name: min_rows
+          type: row_count
+          min: 100
+          severity: error
+        - name: null_check
+          type: null_percentage
+          column: user_id
+          max_percentage: 5.0
+          severity: warning
+
+  - version: 2
+    invariants:
+      base: ${{ versions.1.invariants }}
+      add:
+        after:
+          - name: new_check
+            type: row_count
+            max: 1000000
+            severity: warning
+      modify:
+        after:
+          - name: min_rows
+            type: row_count
+            min: 500  # Increased threshold
+            severity: error
+      remove:
+        after:
+          - null_check  # Remove by name
+```
+
+### CLI Commands
+
+```bash
+# Run with invariant checks (default)
+bqdrift run --query daily_user_stats --date 2024-12-01
+
+# Skip invariant checks
+bqdrift run --query daily_user_stats --skip-invariants
+
+# Run invariants only (no query execution)
+bqdrift check daily_user_stats --date 2024-12-01
+bqdrift check daily_user_stats --before  # Only before checks
+bqdrift check daily_user_stats --after   # Only after checks
+```
 
 ## Partition Configuration
 
