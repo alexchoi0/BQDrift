@@ -1,4 +1,5 @@
 use bqdrift::dsl::QueryLoader;
+use bqdrift::BqType;
 use chrono::NaiveDate;
 use std::path::Path;
 
@@ -70,7 +71,7 @@ fn test_load_versioned_query() {
 
     assert!(query.is_ok());
     let query = query.unwrap();
-    assert_eq!(query.versions.len(), 3);
+    assert_eq!(query.versions.len(), 4);
 }
 
 #[test]
@@ -166,7 +167,7 @@ fn test_latest_version() {
 
     let latest = query.latest_version();
     assert!(latest.is_some());
-    assert_eq!(latest.unwrap().version, 3);
+    assert_eq!(latest.unwrap().version, 4);
 }
 
 #[test]
@@ -203,4 +204,28 @@ fn test_effective_from_dates() {
         query.versions[2].effective_from,
         NaiveDate::from_ymd_opt(2024, 6, 1).unwrap()
     );
+}
+
+#[test]
+fn test_versioned_query_schema_modify() {
+    let loader = QueryLoader::new();
+    let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
+
+    let v3 = &query.versions[2];
+    let v4 = &query.versions[3];
+
+    // v3 has events as INT64
+    let events_v3 = v3.schema.get_field("events").unwrap();
+    assert_eq!(events_v3.field_type, BqType::Int64);
+
+    // v4 modified events to FLOAT64
+    let events_v4 = v4.schema.get_field("events").unwrap();
+    assert_eq!(events_v4.field_type, BqType::Float64);
+
+    // v4 should still have all fields from v3
+    assert_eq!(v4.schema.fields.len(), v3.schema.fields.len());
+    assert!(v4.schema.has_field("date"));
+    assert!(v4.schema.has_field("user_id"));
+    assert!(v4.schema.has_field("events"));
+    assert!(v4.schema.has_field("session_count"));
 }

@@ -43,6 +43,8 @@ pub struct ExtendedSchema {
     #[serde(default)]
     pub add: Vec<Field>,
     #[serde(default)]
+    pub modify: Vec<Field>,
+    #[serde(default)]
     pub remove: Vec<String>,
 }
 
