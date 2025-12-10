@@ -3,7 +3,9 @@ name = "bqdrift"
 version = "0.1.0"
 edition = "2021"
 description = "BigQuery schema versioning, partition management, and OLAP query orchestration"
-license = "MIT"
+license = "MIT OR Apache-2.0"
+authors = ["Alex Choi"]
+repository = "https://github.com/alexchoi0/BQDrift"
 
 [[bin]]
 name = "bqdrift"
