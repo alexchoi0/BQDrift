@@ -28,6 +28,7 @@ clap = { version = "4", features = ["derive", "env"] }
 sha2 = "0.10"
 flate2 = "1"
 base64 = "0.22"
+sqlparser = { version = "0.53", features = ["visitor"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

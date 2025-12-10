@@ -1,5 +1,6 @@
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use crate::schema::{Field, PartitionConfig, ClusterConfig, Schema};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +90,7 @@ pub struct VersionDef {
     pub description: Option<String>,
     pub backfill_since: Option<NaiveDate>,
     pub schema: Schema,
+    pub dependencies: HashSet<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -99,6 +101,7 @@ pub struct ResolvedSqlRevision {
     pub sql_content: String,
     pub reason: Option<String>,
     pub backfill_since: Option<NaiveDate>,
+    pub dependencies: HashSet<String>,
 }
 
 impl VersionDef {

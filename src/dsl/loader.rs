@@ -8,6 +8,7 @@ use super::parser::{
     QueryDef, VersionDef, ResolvedSqlRevision, RawQueryDef,
 };
 use super::resolver::VariableResolver;
+use super::dependencies::SqlDependencies;
 
 pub struct QueryLoader {
     resolver: VariableResolver,
@@ -69,6 +70,8 @@ impl QueryLoader {
             let sql_content = fs::read_to_string(&sql_path)
                 .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
 
+            let dependencies = SqlDependencies::extract(&sql_content).tables;
+
             let sql_revisions = self.resolve_sql_revisions(
                 &raw_version.sql_revisions,
                 base_dir,
@@ -86,6 +89,7 @@ impl QueryLoader {
                 description: raw_version.description,
                 backfill_since: raw_version.backfill_since,
                 schema,
+                dependencies,
             });
         }
 
@@ -117,6 +121,8 @@ impl QueryLoader {
                 let sql_content = fs::read_to_string(&sql_path)
                     .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
 
+                let dependencies = SqlDependencies::extract(&sql_content).tables;
+
                 Ok(ResolvedSqlRevision {
                     revision: rev.revision,
                     effective_from: rev.effective_from,
@@ -124,6 +130,7 @@ impl QueryLoader {
                     sql_content,
                     reason: rev.reason.clone(),
                     backfill_since: rev.backfill_since,
+                    dependencies,
                 })
             })
             .collect()

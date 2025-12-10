@@ -2,8 +2,10 @@ mod parser;
 mod resolver;
 mod loader;
 mod validator;
+mod dependencies;
 
 pub use parser::{QueryDef, VersionDef, SqlRevision, Destination, RawQueryDef, SchemaRef};
 pub use resolver::VariableResolver;
 pub use loader::QueryLoader;
 pub use validator::{QueryValidator, ValidationResult, ValidationError, ValidationWarning};
+pub use dependencies::SqlDependencies;
