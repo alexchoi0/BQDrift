@@ -14,6 +14,7 @@ bqdrift manages versioned OLAP queries for BigQuery with:
 - **Invariant checks** - Validate data quality before/after execution
 - **Drift detection** - Automatically detect when queries need re-running
 - **DAG dependencies** - Cascade re-runs to downstream queries
+- **Server-side execution** - All queries run on BigQuery, no data downloaded
 
 ## Installation
 
