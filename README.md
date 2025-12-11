@@ -92,12 +92,14 @@ bqdrift run --query annual_report --partition 2024
 | `status` | Show drift status (what needs re-running) |
 | `sync` | Re-run drifted partitions |
 | `audit` | Audit sources against executed SQL for modifications |
+| `scratch list` | List scratch tables in a project |
 | `graph` | Show query dependency graph |
 | `init` | Create tracking tables in BigQuery |
 
 ### Environment Variables
 
 - `GCP_PROJECT_ID` - Default GCP project (alternative to `--project`)
+- `BQDRIFT_SCRATCH_PROJECT` - Default scratch project for testing
 
 ### Validation Checks
 
@@ -867,6 +869,83 @@ Continue? [y/N]: y
 ```
 
 **Warning:** Using `--allow-source-mutation` breaks the audit trail. The stored checksums will be updated, but you lose the ability to know what SQL originally ran for those partitions.
+
+## Scratch Mode
+
+Scratch mode provides a safe testing environment between `--dry-run` and production execution. Queries run against production source tables but write results to a scratch project for validation.
+
+### Usage
+
+```bash
+# Run query to scratch project
+bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scratch-project
+
+# With custom TTL (hours)
+bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scratch-project --scratch-ttl 48
+
+# Using environment variable
+export BQDRIFT_SCRATCH_PROJECT=my-scratch-project
+bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch
+```
+
+### How It Works
+
+1. **Source tables**: Reads from production (upstream dependencies unchanged)
+2. **Destination**: Writes to scratch project instead of production
+3. **Invariants**: Before/after checks run against scratch tables
+4. **Auto-expiration**: Tables automatically deleted by BigQuery based on TTL
+
+### Table Naming
+
+Scratch tables are created in a flat `bqdrift_scratch` dataset:
+
+```
+<scratch-project>.bqdrift_scratch.<dataset>__<table>
+```
+
+Example: `my-scratch.bqdrift_scratch.analytics__daily_user_stats`
+
+### TTL / Expiration
+
+Tables auto-expire based on partition type (or `--scratch-ttl` override):
+
+| Partition Type | Default Expiration |
+|----------------|-------------------|
+| `HOUR` | End of partition hour |
+| `DAY` | End of partition day |
+| `MONTH` | End of partition month |
+| `YEAR` | End of partition year |
+| `RANGE` | 24 hours |
+
+### Managing Scratch Tables
+
+```bash
+# List scratch tables
+bqdrift scratch list --project my-scratch-project
+
+# Or with environment variable
+export BQDRIFT_SCRATCH_PROJECT=my-scratch-project
+bqdrift scratch list
+```
+
+### Example Output
+
+```bash
+$ bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scratch-project
+
+[scratch] Writing to: my-scratch-project.bqdrift_scratch.analytics__daily_user_stats
+
+✓ daily_user_stats v3 (scratch)
+  Partition: 2024-06-15
+  Expires: 2024-06-16T00:00:00Z
+
+  Invariants:
+    ✓ min_rows: 12345 >= 100
+    ✓ null_check: 0.0% nulls (max 5.0%)
+
+To run against production:
+  bqdrift run --query daily_user_stats --partition 2024-06-15
+```
 
 ## Tracking Tables
 

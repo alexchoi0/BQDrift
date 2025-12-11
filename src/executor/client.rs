@@ -1,4 +1,6 @@
+use chrono::{DateTime, Utc};
 use gcp_bigquery_client::Client;
+use gcp_bigquery_client::model::dataset::Dataset;
 use gcp_bigquery_client::model::field_type::FieldType;
 use gcp_bigquery_client::model::query_request::QueryRequest;
 use gcp_bigquery_client::model::table::Table;
@@ -321,5 +323,92 @@ impl BqClient {
         }
 
         Ok((first, second))
+    }
+
+    pub async fn ensure_dataset(&self, dataset: &str) -> Result<()> {
+        match self.client.dataset().get(&self.project_id, dataset).await {
+            Ok(_) => Ok(()),
+            Err(_) => {
+                let ds = Dataset::new(&self.project_id, dataset);
+                self.client
+                    .dataset()
+                    .create(ds)
+                    .await
+                    .map_err(|e| {
+                        let ctx = ErrorContext::new()
+                            .with_operation("create_dataset");
+                        BqDriftError::BigQuery(parse_bq_error(e, ctx))
+                    })?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn drop_table(&self, dataset: &str, table: &str) -> Result<()> {
+        match self.client.table().delete(&self.project_id, dataset, table).await {
+            Ok(_) => Ok(()),
+            Err(_) => Ok(()),
+        }
+    }
+
+    pub async fn create_table_with_expiration(
+        &self,
+        dataset: &str,
+        table: &str,
+        schema: &Schema,
+        partition_config: &PartitionConfig,
+        cluster_config: Option<&ClusterConfig>,
+        expiration: DateTime<Utc>,
+    ) -> Result<()> {
+        let table_schema = self.build_table_schema(schema);
+        let time_partitioning = self.build_time_partitioning(partition_config);
+        let clustering = cluster_config.map(|c| self.build_clustering(c));
+
+        let mut tbl = Table::new(
+            &self.project_id,
+            dataset,
+            table,
+            table_schema,
+        );
+
+        tbl.time_partitioning = Some(time_partitioning);
+        if let Some(c) = clustering {
+            tbl.clustering = Some(c);
+        }
+        tbl.expiration_time = Some(expiration.timestamp_millis().to_string());
+
+        self.client
+            .table()
+            .create(tbl)
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("create_table_with_expiration")
+                    .with_table(&self.project_id, dataset, table);
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        Ok(())
+    }
+
+    pub async fn list_tables(&self, dataset: &str) -> Result<Vec<String>> {
+        let tables = self.client
+            .table()
+            .list(&self.project_id, dataset, Default::default())
+            .await
+            .map_err(|e| {
+                let ctx = ErrorContext::new()
+                    .with_operation("list_tables");
+                BqDriftError::BigQuery(parse_bq_error(e, ctx))
+            })?;
+
+        let table_names: Vec<String> = tables
+            .tables
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| t.table_reference.table_id)
+            .collect();
+
+        Ok(table_names)
     }
 }
