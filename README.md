@@ -96,6 +96,34 @@ bqdrift run --query annual_report --partition 2024
 | `scratch promote` | Copy scratch table to production |
 | `graph` | Show query dependency graph |
 | `init` | Create tracking tables in BigQuery |
+| `repl` | Start interactive REPL or JSON-RPC server |
+
+### REPL / Server Mode
+
+bqdrift includes an interactive REPL and JSON-RPC server for programmatic access:
+
+```bash
+# Interactive REPL with tab completion
+bqdrift --repl --project my-project --queries ./queries
+
+# JSON-RPC server over stdin/stdout
+bqdrift --repl --server --project my-project --queries ./queries
+
+# Production server with resource limits
+bqdrift --repl --server \
+  --project my-project \
+  --queries ./queries \
+  --max-sessions 50 \
+  --idle-timeout 300
+```
+
+**Features:**
+- Session-based parallelism (parallel across sessions, sequential within)
+- Auto-cleanup of idle sessions
+- Per-session configuration (project/queries override)
+- Health check endpoint (`ping`)
+
+See [src/repl/README.md](src/repl/README.md) for full documentation and TypeScript client example.
 
 ### Environment Variables
 
