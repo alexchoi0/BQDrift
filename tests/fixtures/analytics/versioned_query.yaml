@@ -9,7 +9,7 @@ destination:
 versions:
   - version: 1
     effective_from: 2024-01-01
-    source: versioned_query.v1.sql
+    source: ${{ file: versioned_query.v1.sql }}
     schema:
       - name: date
         type: DATE
@@ -20,18 +20,18 @@ versions:
 
   - version: 2
     effective_from: 2024-03-01
-    source: versioned_query.v2.sql
+    source: ${{ file: versioned_query.v2.sql }}
     revisions:
       - revision: 1
         effective_from: 2024-03-15
-        source: versioned_query.v2.r1.sql
+        source: ${{ file: versioned_query.v2.r1.sql }}
         reason: Fixed null handling
         backfill_since: 2024-03-01
     schema: ${{ versions.1.schema }}
 
   - version: 3
     effective_from: 2024-06-01
-    source: versioned_query.v3.sql
+    source: ${{ file: versioned_query.v3.sql }}
     schema:
       base: ${{ versions.2.schema }}
       add:
@@ -41,7 +41,7 @@ versions:
 
   - version: 4
     effective_from: 2024-09-01
-    source: versioned_query.v4.sql
+    source: ${{ file: versioned_query.v4.sql }}
     schema:
       base: ${{ versions.3.schema }}
       modify:

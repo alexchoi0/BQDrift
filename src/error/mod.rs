@@ -50,6 +50,9 @@ pub enum BqDriftError {
     #[error("REPL error: {0}")]
     Repl(String),
 
+    #[error("File include error: {0}")]
+    FileInclude(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
