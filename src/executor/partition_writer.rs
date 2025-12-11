@@ -1,6 +1,6 @@
-use chrono::NaiveDate;
 use crate::error::{BqDriftError, Result};
 use crate::dsl::{QueryDef, VersionDef};
+use crate::schema::PartitionKey;
 use crate::invariant::{
     InvariantChecker, InvariantReport, CheckStatus, Severity,
     resolve_invariants_def,
@@ -11,7 +11,7 @@ use super::client::BqClient;
 pub struct WriteStats {
     pub query_name: String,
     pub version: u32,
-    pub partition_date: NaiveDate,
+    pub partition_key: PartitionKey,
     pub rows_written: Option<i64>,
     pub bytes_processed: Option<i64>,
     pub invariant_report: Option<InvariantReport>,
@@ -29,29 +29,30 @@ impl PartitionWriter {
     pub async fn write_partition(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
     ) -> Result<WriteStats> {
-        self.write_partition_with_invariants(query_def, partition_date, true).await
+        self.write_partition_with_invariants(query_def, partition_key, true).await
     }
 
     pub async fn write_partition_skip_invariants(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
     ) -> Result<WriteStats> {
-        self.write_partition_with_invariants(query_def, partition_date, false).await
+        self.write_partition_with_invariants(query_def, partition_key, false).await
     }
 
     async fn write_partition_with_invariants(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
         run_invariants: bool,
     ) -> Result<WriteStats> {
+        let partition_date = partition_key.to_naive_date();
         let version = query_def
             .get_version_for_date(partition_date)
             .ok_or_else(|| BqDriftError::Partition(
-                format!("No version found for date {}", partition_date)
+                format!("No version found for partition {}", partition_key)
             ))?;
 
         let mut invariant_report = InvariantReport::default();
@@ -77,7 +78,7 @@ impl PartitionWriter {
             }
 
             let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
-            let full_sql = self.build_merge_sql(query_def, version, sql, partition_date);
+            let full_sql = self.build_merge_sql(query_def, version, sql, &partition_key);
             self.client.execute_query(&full_sql).await?;
 
             if !after_checks.is_empty() {
@@ -87,14 +88,14 @@ impl PartitionWriter {
             }
         } else {
             let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
-            let full_sql = self.build_merge_sql(query_def, version, sql, partition_date);
+            let full_sql = self.build_merge_sql(query_def, version, sql, &partition_key);
             self.client.execute_query(&full_sql).await?;
         }
 
         Ok(WriteStats {
             query_name: query_def.name.clone(),
             version: version.version,
-            partition_date,
+            partition_key,
             rows_written: None,
             bytes_processed: None,
             invariant_report: if run_invariants { Some(invariant_report) } else { None },
@@ -106,7 +107,7 @@ impl PartitionWriter {
         query_def: &QueryDef,
         _version: &VersionDef,
         sql: &str,
-        partition_date: NaiveDate,
+        partition_key: &PartitionKey,
     ) -> String {
         let dest_table = format!(
             "{}.{}",
@@ -121,7 +122,35 @@ impl PartitionWriter {
             .as_deref()
             .unwrap_or("date");
 
-        let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+        let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_key.sql_value()));
+
+        let partition_condition = match partition_key {
+            PartitionKey::Hour(_) => format!(
+                "TIMESTAMP_TRUNC(target.{}, HOUR) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Day(_) => format!(
+                "target.{} = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Month { .. } => format!(
+                "DATE_TRUNC(target.{}, MONTH) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Year(_) => format!(
+                "DATE_TRUNC(target.{}, YEAR) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Range(_) => format!(
+                "target.{} = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+        };
 
         format!(
             r#"
@@ -130,45 +159,52 @@ impl PartitionWriter {
                 {parameterized_sql}
             ) AS source
             ON FALSE
-            WHEN NOT MATCHED BY SOURCE AND target.{partition_field} = '{partition_date}' THEN DELETE
+            WHEN NOT MATCHED BY SOURCE AND {partition_condition} THEN DELETE
             WHEN NOT MATCHED BY TARGET THEN INSERT ROW
             "#,
             dest_table = dest_table,
             parameterized_sql = parameterized_sql,
-            partition_field = partition_field,
-            partition_date = partition_date,
+            partition_condition = partition_condition,
         )
     }
 
     pub async fn write_partition_truncate(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
     ) -> Result<WriteStats> {
-        self.write_partition_truncate_with_invariants(query_def, partition_date, true).await
+        self.write_partition_truncate_with_invariants(query_def, partition_key, true).await
     }
 
     pub async fn write_partition_truncate_skip_invariants(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
     ) -> Result<WriteStats> {
-        self.write_partition_truncate_with_invariants(query_def, partition_date, false).await
+        self.write_partition_truncate_with_invariants(query_def, partition_key, false).await
     }
 
     async fn write_partition_truncate_with_invariants(
         &self,
         query_def: &QueryDef,
-        partition_date: NaiveDate,
+        partition_key: PartitionKey,
         run_invariants: bool,
     ) -> Result<WriteStats> {
+        let partition_date = partition_key.to_naive_date();
         let version = query_def
             .get_version_for_date(partition_date)
             .ok_or_else(|| BqDriftError::Partition(
-                format!("No version found for date {}", partition_date)
+                format!("No version found for partition {}", partition_key)
             ))?;
 
         let mut invariant_report = InvariantReport::default();
+
+        let dest_table = format!(
+            "{}.{}{}",
+            query_def.destination.dataset,
+            query_def.destination.table,
+            partition_key.decorator()
+        );
 
         if run_invariants {
             let (before_checks, after_checks) = resolve_invariants_def(&version.invariants);
@@ -191,15 +227,7 @@ impl PartitionWriter {
             }
 
             let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
-
-            let dest_table = format!(
-                "{}.{}${}",
-                query_def.destination.dataset,
-                query_def.destination.table,
-                partition_date.format("%Y%m%d")
-            );
-
-            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_key.sql_value()));
 
             let insert_sql = format!(
                 r#"
@@ -225,15 +253,7 @@ impl PartitionWriter {
             }
         } else {
             let sql = version.get_sql_for_date(chrono::Utc::now().date_naive());
-
-            let dest_table = format!(
-                "{}.{}${}",
-                query_def.destination.dataset,
-                query_def.destination.table,
-                partition_date.format("%Y%m%d")
-            );
-
-            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_date));
+            let parameterized_sql = sql.replace("@partition_date", &format!("'{}'", partition_key.sql_value()));
 
             let insert_sql = format!(
                 r#"
@@ -256,7 +276,7 @@ impl PartitionWriter {
         Ok(WriteStats {
             query_name: query_def.name.clone(),
             version: version.version,
-            partition_date,
+            partition_key,
             rows_written: None,
             bytes_processed: None,
             invariant_report: if run_invariants { Some(invariant_report) } else { None },

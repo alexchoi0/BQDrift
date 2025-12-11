@@ -2,6 +2,7 @@ use chrono::NaiveDate;
 use std::collections::HashMap;
 use crate::error::Result;
 use crate::dsl::QueryDef;
+use crate::schema::PartitionKey;
 use super::checksum::Checksums;
 use super::state::{PartitionState, DriftState, DriftReport, PartitionDrift};
 
@@ -89,7 +90,7 @@ impl DriftDetector {
 
         PartitionDrift {
             query_name: query.name.clone(),
-            partition_date,
+            partition_key: PartitionKey::Day(partition_date),
             state,
             current_version: version.map(|v| v.version).unwrap_or(0),
             executed_version,

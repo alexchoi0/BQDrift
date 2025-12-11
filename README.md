@@ -55,6 +55,29 @@ bqdrift --queries ./queries --project my-gcp-project backfill daily_user_stats -
 bqdrift --project my-gcp-project init --dataset bqdrift
 ```
 
+### Partition Date Formats
+
+The CLI accepts flexible date formats based on the query's partition type:
+
+| Partition Type | Format | Example |
+|----------------|--------|---------|
+| `HOUR` | `YYYY-MM-DDTHH` | `--date 2024-06-15T10` |
+| `DAY` | `YYYY-MM-DD` | `--date 2024-06-15` |
+| `MONTH` | `YYYY-MM` | `--date 2024-06` |
+| `YEAR` | `YYYY` | `--date 2024` |
+| `RANGE` | integer | `--date 12345` |
+
+```bash
+# Hourly partitioned query
+bqdrift run --query hourly_events --date 2024-06-15T10
+
+# Monthly partitioned query
+bqdrift backfill monthly_summary --from 2024-01 --to 2024-06
+
+# Yearly partitioned query
+bqdrift run --query annual_report --date 2024
+```
+
 ### CLI Commands
 
 | Command | Description |

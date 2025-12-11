@@ -1,6 +1,7 @@
 use chrono::{NaiveDate, Utc};
 use crate::error::Result;
 use crate::dsl::QueryDef;
+use crate::schema::PartitionKey;
 use super::client::BqClient;
 use super::partition_writer::{PartitionWriter, WriteStats};
 
@@ -13,7 +14,7 @@ pub struct RunReport {
 #[derive(Debug)]
 pub struct RunFailure {
     pub query_name: String,
-    pub partition_date: NaiveDate,
+    pub partition_key: PartitionKey,
     pub error: String,
 }
 
@@ -36,15 +37,19 @@ impl Runner {
     }
 
     pub async fn run_for_date(&self, date: NaiveDate) -> Result<RunReport> {
+        self.run_for_partition(PartitionKey::Day(date)).await
+    }
+
+    pub async fn run_for_partition(&self, partition_key: PartitionKey) -> Result<RunReport> {
         let mut stats = Vec::new();
         let mut failures = Vec::new();
 
         for query in &self.queries {
-            match self.writer.write_partition(query, date).await {
+            match self.writer.write_partition(query, partition_key.clone()).await {
                 Ok(s) => stats.push(s),
                 Err(e) => failures.push(RunFailure {
                     query_name: query.name.clone(),
-                    partition_date: date,
+                    partition_key: partition_key.clone(),
                     error: e.to_string(),
                 }),
             }
@@ -54,6 +59,10 @@ impl Runner {
     }
 
     pub async fn run_query(&self, query_name: &str, date: NaiveDate) -> Result<WriteStats> {
+        self.run_query_partition(query_name, PartitionKey::Day(date)).await
+    }
+
+    pub async fn run_query_partition(&self, query_name: &str, partition_key: PartitionKey) -> Result<WriteStats> {
         let query = self.queries
             .iter()
             .find(|q| q.name == query_name)
@@ -61,7 +70,7 @@ impl Runner {
                 format!("Query '{}' not found", query_name)
             ))?;
 
-        self.writer.write_partition(query, date).await
+        self.writer.write_partition(query, partition_key).await
     }
 
     pub async fn backfill(
@@ -69,6 +78,21 @@ impl Runner {
         query_name: &str,
         from: NaiveDate,
         to: NaiveDate,
+    ) -> Result<RunReport> {
+        self.backfill_partitions(
+            query_name,
+            PartitionKey::Day(from),
+            PartitionKey::Day(to),
+            None,
+        ).await
+    }
+
+    pub async fn backfill_partitions(
+        &self,
+        query_name: &str,
+        from: PartitionKey,
+        to: PartitionKey,
+        interval: Option<i64>,
     ) -> Result<RunReport> {
         let query = self.queries
             .iter()
@@ -82,15 +106,18 @@ impl Runner {
         let mut current = from;
 
         while current <= to {
-            match self.writer.write_partition(query, current).await {
+            match self.writer.write_partition(query, current.clone()).await {
                 Ok(s) => stats.push(s),
                 Err(e) => failures.push(RunFailure {
                     query_name: query_name.to_string(),
-                    partition_date: current,
+                    partition_key: current.clone(),
                     error: e.to_string(),
                 }),
             }
-            current = current.succ_opt().unwrap_or(current);
+            current = match interval {
+                Some(i) => current.next_by(i),
+                None => current.next(),
+            };
         }
 
         Ok(RunReport { stats, failures })

@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate, Timelike};
 use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::{info, error, warn};
@@ -10,6 +10,7 @@ use bqdrift::{DriftDetector, DriftState, decode_sql, format_sql_diff, has_change
 use bqdrift::executor::BqClient;
 use bqdrift::error::{BqDriftError, BigQueryError};
 use bqdrift::executor::WriteStats;
+use bqdrift::schema::{PartitionKey, PartitionType};
 
 #[derive(Parser)]
 #[command(name = "bqdrift")]
@@ -50,9 +51,9 @@ enum Commands {
         #[arg(short, long)]
         query: Option<String>,
 
-        /// Partition date (defaults to today)
+        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024). Defaults to today.
         #[arg(short, long)]
-        date: Option<NaiveDate>,
+        date: Option<String>,
 
         /// Dry run - validate and show SQL without executing
         #[arg(long)]
@@ -68,13 +69,13 @@ enum Commands {
         /// Query name
         query: String,
 
-        /// Start date (inclusive)
+        /// Start partition (inclusive, e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024)
         #[arg(short, long)]
-        from: NaiveDate,
+        from: String,
 
-        /// End date (inclusive)
+        /// End partition (inclusive, e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024)
         #[arg(short, long)]
-        to: NaiveDate,
+        to: String,
 
         /// Dry run - show what would be executed
         #[arg(long)]
@@ -90,9 +91,9 @@ enum Commands {
         /// Query name
         query: String,
 
-        /// Partition date (defaults to today)
+        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024). Defaults to today.
         #[arg(short, long)]
-        date: Option<NaiveDate>,
+        date: Option<String>,
 
         /// Run only before checks
         #[arg(long)]
@@ -122,13 +123,13 @@ enum Commands {
 
     /// Detect and sync drifted partitions
     Sync {
-        /// Date range start (defaults to 30 days ago)
+        /// Date range start (defaults to 30 days ago, e.g., 2024-01-15)
         #[arg(short, long)]
-        from: Option<NaiveDate>,
+        from: Option<String>,
 
-        /// Date range end (defaults to today)
+        /// Date range end (defaults to today, e.g., 2024-01-15)
         #[arg(short, long)]
-        to: Option<NaiveDate>,
+        to: Option<String>,
 
         /// Dry run - show what would be synced with SQL diffs
         #[arg(long)]
@@ -187,6 +188,25 @@ fn print_bq_error(err: &BigQueryError) {
         eprintln!("  {}", line);
     }
     eprintln!();
+}
+
+fn parse_partition_key(s: &str, partition_type: &PartitionType) -> Result<PartitionKey, Box<dyn std::error::Error>> {
+    PartitionKey::parse(s, partition_type)
+        .map_err(|e| e.into())
+}
+
+fn default_partition_key(partition_type: &PartitionType) -> PartitionKey {
+    let today = chrono::Utc::now().date_naive();
+    match partition_type {
+        PartitionType::Hour => {
+            let now = chrono::Utc::now().naive_utc();
+            PartitionKey::Hour(now.date().and_hms_opt(now.time().hour(), 0, 0).unwrap())
+        }
+        PartitionType::Day | PartitionType::IngestionTime => PartitionKey::Day(today),
+        PartitionType::Month => PartitionKey::Month { year: today.year(), month: today.month() },
+        PartitionType::Year => PartitionKey::Year(today.year()),
+        PartitionType::Range => PartitionKey::Range(0),
+    }
 }
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
@@ -355,16 +375,13 @@ async fn cmd_run(
     queries_path: &PathBuf,
     project: &str,
     query_name: Option<String>,
-    date: Option<NaiveDate>,
+    date: Option<String>,
     dry_run: bool,
     skip_invariants: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let queries = loader.load_dir(queries_path)?;
-    let date = date.unwrap_or_else(|| chrono::Utc::now().date_naive());
 
     if dry_run {
-        info!("Dry run for date: {}", date);
-
         let queries_to_run: Vec<_> = match &query_name {
             Some(name) => queries.iter().filter(|q| &q.name == name).collect(),
             None => queries.iter().collect(),
@@ -378,13 +395,22 @@ async fn cmd_run(
         }
 
         for query in queries_to_run {
+            let partition_type = &query.destination.partition.partition_type;
+            let partition_key = match &date {
+                Some(d) => parse_partition_key(d, partition_type)?,
+                None => default_partition_key(partition_type),
+            };
+
+            info!("Dry run for partition: {}", partition_key);
             println!("Query: {}", query.name);
             println!("Destination: {}.{}", query.destination.dataset, query.destination.table);
+            println!("Partition type: {:?}", partition_type);
 
-            if let Some(version) = query.get_version_for_date(date) {
+            let date_for_version = partition_key.to_naive_date();
+            if let Some(version) = query.get_version_for_date(date_for_version) {
                 println!("Version: {}", version.version);
                 println!("SQL file: {}", version.sql);
-                println!("\n--- SQL ---\n{}\n-----------\n", version.get_sql_for_date(date));
+                println!("\n--- SQL ---\n{}\n-----------\n", version.get_sql_for_date(date_for_version));
 
                 if !skip_invariants {
                     let before_count = version.invariants.before.len();
@@ -394,15 +420,12 @@ async fn cmd_run(
                     }
                 }
             } else {
-                warn!("No version found for date {}", date);
+                warn!("No version found for date {}", date_for_version);
             }
         }
 
         return Ok(());
     }
-
-    let client = BqClient::new(project).await?;
-    let runner = Runner::new(client, queries);
 
     if skip_invariants {
         info!("Running with invariants skipped");
@@ -410,20 +433,40 @@ async fn cmd_run(
 
     match query_name {
         Some(name) => {
-            info!("Running query '{}' for date {}", name, date);
-            let stats = runner.run_query(&name, date).await?;
+            let query = queries.iter()
+                .find(|q| q.name == name)
+                .ok_or_else(|| format!("Query '{}' not found", name))?;
+            let partition_type = &query.destination.partition.partition_type;
+            let partition_key = match &date {
+                Some(d) => parse_partition_key(d, partition_type)?,
+                None => default_partition_key(partition_type),
+            };
+
+            let client = BqClient::new(project).await?;
+            let runner = Runner::new(client, queries);
+
+            info!("Running query '{}' for partition {}", name, partition_key);
+            let stats = runner.run_query_partition(&name, partition_key).await?;
             print_stats(&stats, skip_invariants);
         }
         None => {
-            info!("Running all queries for date {}", date);
-            let report = runner.run_for_date(date).await?;
+            let partition_key = match &date {
+                Some(d) => parse_partition_key(d, &PartitionType::Day)?,
+                None => default_partition_key(&PartitionType::Day),
+            };
+
+            let client = BqClient::new(project).await?;
+            let runner = Runner::new(client, queries);
+
+            info!("Running all queries for partition {}", partition_key);
+            let report = runner.run_for_partition(partition_key).await?;
 
             for stats in &report.stats {
                 print_stats(stats, skip_invariants);
             }
 
             for failure in &report.failures {
-                eprintln!("\x1b[31m✗\x1b[0m {} ({}): {}", failure.query_name, failure.partition_date, failure.error);
+                eprintln!("\x1b[31m✗\x1b[0m {} ({}): {}", failure.query_name, failure.partition_key, failure.error);
             }
 
             println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
@@ -434,7 +477,7 @@ async fn cmd_run(
 }
 
 fn print_stats(stats: &WriteStats, skip_invariants: bool) {
-    println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_date);
+    println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_key);
 
     if !skip_invariants {
         if let Some(report) = &stats.invariant_report {
@@ -484,8 +527,8 @@ async fn cmd_backfill(
     queries_path: &PathBuf,
     project: &str,
     query_name: &str,
-    from: NaiveDate,
-    to: NaiveDate,
+    from: String,
+    to: String,
     dry_run: bool,
     skip_invariants: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -495,18 +538,22 @@ async fn cmd_backfill(
         .find(|q| q.name == query_name)
         .ok_or_else(|| format!("Query '{}' not found", query_name))?;
 
-    let days = (to - from).num_days() + 1;
-    info!("Backfilling '{}' from {} to {} ({} days)", query_name, from, to, days);
+    let partition_type = &query.destination.partition.partition_type;
+    let from_key = parse_partition_key(&from, partition_type)?;
+    let to_key = parse_partition_key(&to, partition_type)?;
+
+    info!("Backfilling '{}' from {} to {}", query_name, from_key, to_key);
 
     if dry_run {
-        let mut current = from;
-        while current <= to {
-            if let Some(version) = query.get_version_for_date(current) {
+        let mut current = from_key.clone();
+        while current <= to_key {
+            let date = current.to_naive_date();
+            if let Some(version) = query.get_version_for_date(date) {
                 println!("{}: v{} ({})", current, version.version, version.sql);
             } else {
                 println!("{}: no version available", current);
             }
-            current = current.succ_opt().unwrap_or(current);
+            current = current.next();
         }
         return Ok(());
     }
@@ -518,14 +565,14 @@ async fn cmd_backfill(
     let client = BqClient::new(project).await?;
     let runner = Runner::new(client, queries);
 
-    let report = runner.backfill(query_name, from, to).await?;
+    let report = runner.backfill_partitions(query_name, from_key, to_key, None).await?;
 
     for stats in &report.stats {
         print_stats(stats, skip_invariants);
     }
 
     for failure in &report.failures {
-        eprintln!("\x1b[31m✗\x1b[0m {}: {}", failure.partition_date, failure.error);
+        eprintln!("\x1b[31m✗\x1b[0m {}: {}", failure.partition_key, failure.error);
     }
 
     println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
@@ -538,32 +585,38 @@ async fn cmd_check(
     queries_path: &PathBuf,
     project: &str,
     query_name: &str,
-    date: Option<NaiveDate>,
+    date: Option<String>,
     run_before: bool,
     run_after: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let queries = loader.load_dir(queries_path)?;
-    let date = date.unwrap_or_else(|| chrono::Utc::now().date_naive());
 
     let query = queries.iter()
         .find(|q| q.name == query_name)
         .ok_or_else(|| format!("Query '{}' not found", query_name))?;
 
-    let version = query.get_version_for_date(date)
-        .ok_or_else(|| format!("No version found for date {}", date))?;
+    let partition_type = &query.destination.partition.partition_type;
+    let partition_key = match &date {
+        Some(d) => parse_partition_key(d, partition_type)?,
+        None => default_partition_key(partition_type),
+    };
+    let date_for_version = partition_key.to_naive_date();
+
+    let version = query.get_version_for_date(date_for_version)
+        .ok_or_else(|| format!("No version found for date {}", date_for_version))?;
 
     let (before_checks, after_checks) = resolve_invariants_def(&version.invariants);
 
     let run_all = !run_before && !run_after;
 
     let client = BqClient::new(project).await?;
-    let checker = InvariantChecker::new(&client, &query.destination, date);
+    let checker = InvariantChecker::new(&client, &query.destination, date_for_version);
 
     let mut total_passed = 0;
     let mut total_failed = 0;
     let mut has_errors = false;
 
-    println!("Running invariant checks for '{}' v{} on {}", query.name, version.version, date);
+    println!("Running invariant checks for '{}' v{} on {}", query.name, version.version, partition_key);
     println!();
 
     if (run_all || run_before) && !before_checks.is_empty() {
@@ -739,8 +792,8 @@ async fn cmd_sync(
     loader: &QueryLoader,
     queries_path: &PathBuf,
     _project: &str,
-    from: Option<NaiveDate>,
-    to: Option<NaiveDate>,
+    from: Option<String>,
+    to: Option<String>,
     dry_run: bool,
     _tracking_dataset: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -748,8 +801,16 @@ async fn cmd_sync(
     let yaml_contents = loader.load_yaml_contents(queries_path)?;
 
     let today = chrono::Utc::now().date_naive();
-    let from = from.unwrap_or_else(|| today - chrono::Duration::days(30));
-    let to = to.unwrap_or(today);
+    let from = match from {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|_| format!("Invalid date format: '{}'. Expected YYYY-MM-DD", s))?,
+        None => today - chrono::Duration::days(30),
+    };
+    let to = match to {
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .map_err(|_| format!("Invalid date format: '{}'. Expected YYYY-MM-DD", s))?,
+        None => today,
+    };
 
     info!("Detecting drift from {} to {}", from, to);
 
@@ -806,7 +867,7 @@ async fn cmd_sync(
                     DriftState::Current => "current",
                 };
 
-                println!("  {} [{}] v{}", partition.partition_date, state_str, partition.current_version);
+                println!("  {} [{}] v{}", partition.partition_key, state_str, partition.current_version);
 
                 if partition.state == DriftState::SqlChanged {
                     if let (Some(executed_b64), Some(current_sql)) = (&partition.executed_sql_b64, &partition.current_sql) {
