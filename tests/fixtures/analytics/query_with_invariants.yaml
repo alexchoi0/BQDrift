@@ -9,7 +9,7 @@ destination:
 versions:
   - version: 1
     effective_from: 2024-01-01
-    sql: simple_query.v1.sql
+    source: simple_query.v1.sql
     schema:
       - name: date
         type: DATE
@@ -50,7 +50,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    sql: simple_query.v1.sql
+    source: simple_query.v1.sql
     schema: ${{ versions.1.schema }}
 
     invariants:

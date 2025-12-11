@@ -147,7 +147,7 @@ tags: [analytics, users, daily]
 versions:
   - version: 1
     effective_from: 2024-01-15
-    sql: daily_user_stats.v1.sql
+    source: daily_user_stats.v1.sql
     schema:
       - name: date
         type: DATE
@@ -202,6 +202,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
+## SQL Source Options
+
+Query SQL can be defined as a file reference or inline:
+
+```yaml
+versions:
+  # File reference (relative to YAML)
+  - version: 1
+    effective_from: 2024-01-01
+    source: query.v1.sql
+    schema: [...]
+
+  # Inline SQL
+  - version: 2
+    effective_from: 2024-06-01
+    source-inline: |
+      SELECT
+        DATE(created_at) AS date,
+        COUNT(*) AS count
+      FROM raw.events
+      WHERE DATE(created_at) = @partition_date
+      GROUP BY 1
+    schema: [...]
+```
+
 ## Schema Versioning
 
 When schema changes, create a new version:
@@ -210,7 +235,7 @@ When schema changes, create a new version:
 versions:
   - version: 1
     effective_from: 2024-01-15
-    sql: daily_user_stats.v1.sql
+    source: daily_user_stats.v1.sql
     schema:
       - name: date
         type: DATE
@@ -219,7 +244,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    sql: daily_user_stats.v2.sql
+    source: daily_user_stats.v2.sql
     schema:
       base: ${{ versions.1.schema }}
       add:
@@ -246,7 +271,7 @@ Change a column's type or properties without rewriting the full schema:
 versions:
   - version: 1
     effective_from: 2024-01-15
-    sql: query.v1.sql
+    source: query.v1.sql
     schema:
       - name: date
         type: DATE
@@ -255,7 +280,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    sql: query.v2.sql
+    source: query.v2.sql
     schema:
       base: ${{ versions.1.schema }}
       modify:
@@ -277,16 +302,16 @@ Fix SQL bugs without creating a new schema version:
 versions:
   - version: 2
     effective_from: 2024-03-01
-    sql: query.v2.sql
+    source: query.v2.sql
     sql_revisions:
       - revision: 1
         effective_from: 2024-03-15
-        sql: query.v2.r1.sql
+        source: query.v2.r1.sql
         reason: Fixed null handling in join
         backfill_since: 2024-03-01
       - revision: 2
         effective_from: 2024-04-01
-        sql: query.v2.r2.sql
+        source: query.v2.r2.sql
         reason: Performance optimization
     schema: ${{ versions.1.schema }}
 ```
@@ -304,7 +329,7 @@ Validate data quality with invariant checks that run **before** and/or **after**
 versions:
   - version: 1
     effective_from: 2024-01-15
-    sql: daily_user_stats.v1.sql
+    source: daily_user_stats.v1.sql
     schema: [...]
 
     invariants:
@@ -557,7 +582,7 @@ Name: weekly_summary
 Versions:
   Version 1
   effective_from: 2024-01-01
-  sql: weekly_summary.v1.sql
+  source: weekly_summary.v1.sql
   schema: 2 fields
   dependencies (auto-detected):
     - analytics.daily_user_stats

@@ -409,7 +409,7 @@ async fn cmd_run(
             let date_for_version = partition_key.to_naive_date();
             if let Some(version) = query.get_version_for_date(date_for_version) {
                 println!("Version: {}", version.version);
-                println!("SQL file: {}", version.sql);
+                println!("Source: {}", version.source);
                 println!("\n--- SQL ---\n{}\n-----------\n", version.get_sql_for_date(date_for_version));
 
                 if !skip_invariants {
@@ -549,7 +549,7 @@ async fn cmd_backfill(
         while current <= to_key {
             let date = current.to_naive_date();
             if let Some(version) = query.get_version_for_date(date) {
-                println!("{}: v{} ({})", current, version.version, version.sql);
+                println!("{}: v{} ({})", current, version.version, version.source);
             } else {
                 println!("{}: no version available", current);
             }
@@ -730,7 +730,7 @@ fn cmd_show(
     for version in &query.versions {
         println!("\n  Version {}", version.version);
         println!("  effective_from: {}", version.effective_from);
-        println!("  sql: {}", version.sql);
+        println!("  source: {}", version.source);
 
         if let Some(desc) = &version.description {
             println!("  description: {}", desc);
@@ -743,7 +743,7 @@ fn cmd_show(
         if !version.sql_revisions.is_empty() {
             println!("  revisions:");
             for rev in &version.sql_revisions {
-                print!("    r{}: {} ({})", rev.revision, rev.sql, rev.effective_from);
+                print!("    r{}: {} ({})", rev.revision, rev.source, rev.effective_from);
                 if let Some(reason) = &rev.reason {
                     print!(" - {}", reason);
                 }

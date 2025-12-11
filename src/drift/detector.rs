@@ -152,7 +152,7 @@ mod tests {
             versions: vec![VersionDef {
                 version: 1,
                 effective_from: NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
-                sql: "test.sql".to_string(),
+                source: "test.sql".to_string(),
                 sql_content: sql_content.to_string(),
                 sql_revisions: vec![],
                 description: None,
