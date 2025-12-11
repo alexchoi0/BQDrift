@@ -82,14 +82,18 @@ impl QueryLoader {
                 &resolved_schemas,
             )?;
 
-            let sql_filename = self.resolver.resolve_sql_ref(
-                &raw_version.sql,
-                &resolved_sqls,
-            )?;
-
-            let sql_path = base_dir.join(&sql_filename);
-            let sql_content = fs::read_to_string(&sql_path)
-                .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+            let (source_name, sql_content) = match &raw_version.source {
+                SqlSource::Source(path) => {
+                    let resolved_path = self.resolver.resolve_sql_ref(path, &resolved_sqls)?;
+                    let sql_path = base_dir.join(&resolved_path);
+                    let content = fs::read_to_string(&sql_path)
+                        .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                    (resolved_path, content)
+                }
+                SqlSource::SourceInline(content) => {
+                    ("<inline>".to_string(), content.clone())
+                }
+            };
 
             let dependencies = SqlDependencies::extract(&sql_content).tables;
 
@@ -106,13 +110,15 @@ impl QueryLoader {
             let invariants = self.load_invariant_sql_files(invariants, base_dir)?;
 
             resolved_schemas.insert(raw_version.version, schema.clone());
-            resolved_sqls.insert(raw_version.version, sql_filename.clone());
+            if let SqlSource::Source(path) = &raw_version.source {
+                resolved_sqls.insert(raw_version.version, path.clone());
+            }
             resolved_invariants.insert(raw_version.version, invariants.clone());
 
             versions.push(VersionDef {
                 version: raw_version.version,
                 effective_from: raw_version.effective_from,
-                sql: sql_filename,
+                source: source_name,
                 sql_content,
                 sql_revisions,
                 description: raw_version.description,
@@ -147,16 +153,24 @@ impl QueryLoader {
         revisions
             .iter()
             .map(|rev| {
-                let sql_path = base_dir.join(&rev.sql);
-                let sql_content = fs::read_to_string(&sql_path)
-                    .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                let (source_name, sql_content) = match &rev.source {
+                    SqlSource::Source(path) => {
+                        let sql_path = base_dir.join(path);
+                        let content = fs::read_to_string(&sql_path)
+                            .map_err(|_| BqDriftError::SqlFileNotFound(sql_path.display().to_string()))?;
+                        (path.clone(), content)
+                    }
+                    SqlSource::SourceInline(content) => {
+                        ("<inline>".to_string(), content.clone())
+                    }
+                };
 
                 let dependencies = SqlDependencies::extract(&sql_content).tables;
 
                 Ok(ResolvedSqlRevision {
                     revision: rev.revision,
                     effective_from: rev.effective_from,
-                    sql: rev.sql.clone(),
+                    source: source_name,
                     sql_content,
                     reason: rev.reason.clone(),
                     backfill_since: rev.backfill_since,

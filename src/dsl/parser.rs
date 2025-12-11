@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use crate::schema::{Field, PartitionConfig, ClusterConfig, Schema};
-use crate::invariant::{InvariantsRef, InvariantsDef};
+use crate::invariant::{InvariantsRef, InvariantsDef, SqlSource};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawQueryDef {
@@ -21,7 +21,8 @@ pub struct RawQueryDef {
 pub struct RawVersionDef {
     pub version: u32,
     pub effective_from: NaiveDate,
-    pub sql: String,
+    #[serde(flatten)]
+    pub source: SqlSource,
     #[serde(default)]
     pub sql_revisions: Vec<SqlRevision>,
     #[serde(default)]
@@ -56,7 +57,8 @@ pub struct ExtendedSchema {
 pub struct SqlRevision {
     pub revision: u32,
     pub effective_from: NaiveDate,
-    pub sql: String,
+    #[serde(flatten)]
+    pub source: SqlSource,
     #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
@@ -87,7 +89,7 @@ pub struct QueryDef {
 pub struct VersionDef {
     pub version: u32,
     pub effective_from: NaiveDate,
-    pub sql: String,
+    pub source: String,
     pub sql_content: String,
     pub sql_revisions: Vec<ResolvedSqlRevision>,
     pub description: Option<String>,
@@ -101,7 +103,7 @@ pub struct VersionDef {
 pub struct ResolvedSqlRevision {
     pub revision: u32,
     pub effective_from: NaiveDate,
-    pub sql: String,
+    pub source: String,
     pub sql_content: String,
     pub reason: Option<String>,
     pub backfill_since: Option<NaiveDate>,
