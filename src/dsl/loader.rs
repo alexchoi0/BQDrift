@@ -37,6 +37,25 @@ impl QueryLoader {
             .collect()
     }
 
+    pub fn load_yaml_contents(&self, path: impl AsRef<Path>) -> Result<HashMap<String, String>> {
+        let pattern = path.as_ref().join("**/*.yaml");
+        let pattern_str = pattern.to_string_lossy();
+
+        let yaml_files: Vec<PathBuf> = glob(&pattern_str)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))?
+            .filter_map(|r| r.ok())
+            .collect();
+
+        let mut contents = HashMap::new();
+        for yaml_path in yaml_files {
+            let yaml_content = fs::read_to_string(&yaml_path)
+                .map_err(|_| BqDriftError::YamlFileNotFound(yaml_path.display().to_string()))?;
+            let raw: RawQueryDef = serde_yaml::from_str(&yaml_content)?;
+            contents.insert(raw.name, yaml_content);
+        }
+        Ok(contents)
+    }
+
     pub fn load_query(&self, yaml_path: impl AsRef<Path>) -> Result<QueryDef> {
         let yaml_path = yaml_path.as_ref();
         let yaml_content = fs::read_to_string(yaml_path)

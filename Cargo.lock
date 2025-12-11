@@ -156,6 +156,7 @@ dependencies = [
  "base64",
  "chrono",
  "clap",
+ "colored",
  "flate2",
  "gcp-bigquery-client",
  "glob",
@@ -164,6 +165,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2",
+ "similar",
  "sqlparser",
  "thiserror",
  "tokio",
@@ -267,6 +269,16 @@ name = "colorchoice"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
+
+[[package]]
+name = "colored"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
+dependencies = [
+ "lazy_static",
+ "windows-sys 0.52.0",
+]
 
 [[package]]
 name = "core-foundation"
@@ -1721,6 +1733,12 @@ name = "simd-adler32"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e320a6c5ad31d271ad523dcf3ad13e2767ad8b1cb8f047f75a8aeaf8da139da2"
+
+[[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
 
 [[package]]
 name = "slab"
