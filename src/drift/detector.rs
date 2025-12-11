@@ -56,15 +56,16 @@ impl DriftDetector {
         yaml_content: &str,
     ) -> PartitionDrift {
         let version = query.get_version_for_date(partition_date);
+        let current_sql = version.map(|v| v.get_sql_for_date(chrono::Utc::now().date_naive()).to_string());
 
-        let (state, executed_version, caused_by) = match (version, stored) {
-            (None, _) => (DriftState::NeverRun, None, None),
+        let (state, executed_version, caused_by, executed_sql_b64) = match (version, stored) {
+            (None, _) => (DriftState::NeverRun, None, None, None),
 
-            (Some(_), None) => (DriftState::NeverRun, None, None),
+            (Some(_), None) => (DriftState::NeverRun, None, None, None),
 
             (Some(v), Some(stored)) => {
                 if stored.status == super::state::ExecutionStatus::Failed {
-                    (DriftState::Failed, Some(stored.version), None)
+                    (DriftState::Failed, Some(stored.version), None, stored.executed_sql_b64.clone())
                 } else {
                     let current_checksums = Checksums::from_version(
                         v,
@@ -73,14 +74,14 @@ impl DriftDetector {
                     );
 
                     if current_checksums.schema != stored.schema_checksum {
-                        (DriftState::SchemaChanged, Some(stored.version), None)
+                        (DriftState::SchemaChanged, Some(stored.version), None, stored.executed_sql_b64.clone())
                     } else if current_checksums.sql != stored.sql_checksum {
-                        (DriftState::SqlChanged, Some(stored.version), None)
+                        (DriftState::SqlChanged, Some(stored.version), None, stored.executed_sql_b64.clone())
                     } else if v.version != stored.version {
-                        (DriftState::VersionUpgraded, Some(stored.version), None)
+                        (DriftState::VersionUpgraded, Some(stored.version), None, stored.executed_sql_b64.clone())
                     } else {
                         // TODO: Check upstream_changed
-                        (DriftState::Current, Some(stored.version), None)
+                        (DriftState::Current, Some(stored.version), None, stored.executed_sql_b64.clone())
                     }
                 }
             }
@@ -93,6 +94,8 @@ impl DriftDetector {
             current_version: version.map(|v| v.version).unwrap_or(0),
             executed_version,
             caused_by,
+            executed_sql_b64,
+            current_sql,
         }
     }
 

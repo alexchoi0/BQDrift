@@ -12,6 +12,7 @@ pub struct PartitionState {
     pub sql_checksum: String,
     pub schema_checksum: String,
     pub yaml_checksum: String,
+    pub executed_sql_b64: Option<String>,
     pub upstream_states: HashMap<String, DateTime<Utc>>,
     pub executed_at: DateTime<Utc>,
     pub execution_time_ms: Option<i64>,
@@ -64,6 +65,8 @@ pub struct PartitionDrift {
     pub current_version: u32,
     pub executed_version: Option<u32>,
     pub caused_by: Option<String>,
+    pub executed_sql_b64: Option<String>,
+    pub current_sql: Option<String>,
 }
 
 #[derive(Debug, Default)]

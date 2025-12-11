@@ -29,6 +29,8 @@ sha2 = "0.10"
 flate2 = "1"
 base64 = "0.22"
 sqlparser = { version = "0.53", features = ["visitor"] }
+similar = "2"
+colored = "2"
 
 [dev-dependencies]
 tokio-test = "0.4"

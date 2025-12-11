@@ -6,6 +6,7 @@ use tracing::{info, error, warn};
 use tracing_subscriber::EnvFilter;
 
 use bqdrift::{QueryLoader, QueryValidator, Runner, CheckStatus, Severity, InvariantChecker, resolve_invariants_def};
+use bqdrift::{DriftDetector, DriftState, decode_sql, format_sql_diff, has_changes};
 use bqdrift::executor::BqClient;
 use bqdrift::error::{BqDriftError, BigQueryError};
 use bqdrift::executor::WriteStats;
@@ -118,6 +119,29 @@ enum Commands {
         #[arg(short, long, default_value = "bqdrift")]
         dataset: String,
     },
+
+    /// Detect and sync drifted partitions
+    Sync {
+        /// Date range start (defaults to 30 days ago)
+        #[arg(short, long)]
+        from: Option<NaiveDate>,
+
+        /// Date range end (defaults to today)
+        #[arg(short, long)]
+        to: Option<NaiveDate>,
+
+        /// Dry run - show what would be synced with SQL diffs
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip invariant checks when syncing
+        #[arg(long)]
+        skip_invariants: bool,
+
+        /// Dataset for tracking table
+        #[arg(long, default_value = "bqdrift")]
+        tracking_dataset: String,
+    },
 }
 
 #[tokio::main]
@@ -199,6 +223,15 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Commands::Init { dataset } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
             cmd_init(&project, &dataset).await?;
+        }
+
+        Commands::Sync { from, to, dry_run, skip_invariants: _, tracking_dataset } => {
+            let project = if dry_run {
+                cli.project.unwrap_or_default()
+            } else {
+                cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?
+            };
+            cmd_sync(&loader, &cli.queries, &project, from, to, dry_run, &tracking_dataset).await?;
         }
     }
 
@@ -698,6 +731,102 @@ async fn cmd_init(project: &str, dataset: &str) -> Result<(), Box<dyn std::error
     tracker.ensure_tracking_table().await?;
 
     println!("✓ Tracking table created: {}._bqdrift_query_runs", dataset);
+
+    Ok(())
+}
+
+async fn cmd_sync(
+    loader: &QueryLoader,
+    queries_path: &PathBuf,
+    _project: &str,
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+    dry_run: bool,
+    _tracking_dataset: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let queries = loader.load_dir(queries_path)?;
+    let yaml_contents = loader.load_yaml_contents(queries_path)?;
+
+    let today = chrono::Utc::now().date_naive();
+    let from = from.unwrap_or_else(|| today - chrono::Duration::days(30));
+    let to = to.unwrap_or(today);
+
+    info!("Detecting drift from {} to {}", from, to);
+
+    let detector = DriftDetector::new(queries.clone(), yaml_contents);
+    let report = detector.detect(&[], from, to)?;
+
+    let drifted: Vec<_> = report.needs_rerun();
+
+    if drifted.is_empty() {
+        println!("✓ All partitions are current");
+        return Ok(());
+    }
+
+    let summary = report.summary();
+    println!("\nDrift summary:");
+    for (state, count) in &summary {
+        if *state != DriftState::Current {
+            let icon = match state {
+                DriftState::SqlChanged => "\x1b[33m◇\x1b[0m",
+                DriftState::SchemaChanged => "\x1b[31m◆\x1b[0m",
+                DriftState::VersionUpgraded => "\x1b[34m▲\x1b[0m",
+                DriftState::UpstreamChanged => "\x1b[35m↺\x1b[0m",
+                DriftState::NeverRun => "\x1b[36m○\x1b[0m",
+                DriftState::Failed => "\x1b[31m✗\x1b[0m",
+                DriftState::Current => "",
+            };
+            println!("  {} {} {}", icon, count, state.as_str());
+        }
+    }
+
+    if dry_run {
+        println!("\n--- Dry run: showing drifted partitions ---\n");
+
+        let by_query = report.by_query();
+        for (query_name, partitions) in by_query {
+            let drifted_partitions: Vec<_> = partitions.iter()
+                .filter(|p| p.state.needs_rerun())
+                .collect();
+
+            if drifted_partitions.is_empty() {
+                continue;
+            }
+
+            println!("\x1b[1m{}\x1b[0m", query_name);
+
+            for partition in drifted_partitions {
+                let state_str = match partition.state {
+                    DriftState::SqlChanged => "\x1b[33msql_changed\x1b[0m",
+                    DriftState::SchemaChanged => "\x1b[31mschema_changed\x1b[0m",
+                    DriftState::VersionUpgraded => "\x1b[34mversion_upgraded\x1b[0m",
+                    DriftState::UpstreamChanged => "\x1b[35mupstream_changed\x1b[0m",
+                    DriftState::NeverRun => "\x1b[36mnever_run\x1b[0m",
+                    DriftState::Failed => "\x1b[31mfailed\x1b[0m",
+                    DriftState::Current => "current",
+                };
+
+                println!("  {} [{}] v{}", partition.partition_date, state_str, partition.current_version);
+
+                if partition.state == DriftState::SqlChanged {
+                    if let (Some(executed_b64), Some(current_sql)) = (&partition.executed_sql_b64, &partition.current_sql) {
+                        if let Some(executed_sql) = decode_sql(executed_b64) {
+                            if has_changes(&executed_sql, current_sql) {
+                                println!();
+                                println!("{}", format_sql_diff(&executed_sql, current_sql));
+                                println!();
+                            }
+                        }
+                    }
+                }
+            }
+            println!();
+        }
+
+        println!("Run without --dry-run to execute {} drifted partitions", drifted.len());
+    } else {
+        println!("\nSync execution not yet implemented. Use --dry-run to preview changes.");
+    }
 
     Ok(())
 }
