@@ -6,6 +6,7 @@ pub mod migration;
 pub mod drift;
 pub mod invariant;
 pub mod diff;
+pub mod repl;
 
 pub use error::{BqDriftError, Result};
 pub use schema::{BqType, Field, FieldMode, Schema, PartitionConfig, PartitionType, PartitionKey, ClusterConfig};
@@ -19,3 +20,4 @@ pub use invariant::{
     InvariantChecker, CheckResult, CheckStatus, InvariantReport,
     resolve_invariants_def,
 };
+pub use repl::{ReplSession, ReplCommand, ReplResult, InteractiveRepl, AsyncJsonRpcServer, ServerConfig, SessionManager, SessionInfo, ServerConfigInfo};

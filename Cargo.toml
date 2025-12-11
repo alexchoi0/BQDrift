@@ -32,6 +32,10 @@ sqlparser = { version = "0.53", features = ["visitor"] }
 similar = "2"
 colored = "2"
 tabled = "0.20.0"
+rustyline = "14"
+atty = "0.2"
+dirs = "5"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

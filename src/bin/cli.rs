@@ -19,7 +19,7 @@ use bqdrift::schema::{PartitionKey, PartitionType};
 #[command(version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Path to queries directory
     #[arg(short, long, default_value = "./queries")]
@@ -32,6 +32,26 @@ struct Cli {
     /// Enable verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Start interactive REPL or JSON-RPC server mode
+    #[arg(long)]
+    repl: bool,
+
+    /// Force server mode (JSON-RPC over stdin/stdout) even if TTY detected
+    #[arg(long, requires = "repl")]
+    server: bool,
+
+    /// Maximum number of concurrent sessions (server mode only)
+    #[arg(long, default_value = "100", requires = "repl")]
+    max_sessions: usize,
+
+    /// Default session idle timeout in seconds (server mode only)
+    #[arg(long, default_value = "300", requires = "repl")]
+    idle_timeout: u64,
+
+    /// Maximum allowed idle timeout in seconds (server mode only)
+    #[arg(long, default_value = "3600", requires = "repl")]
+    max_idle_timeout: u64,
 }
 
 #[derive(Subcommand)]
@@ -283,9 +303,15 @@ fn default_partition_key(partition_type: &PartitionType) -> PartitionKey {
 }
 
 async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    if cli.repl {
+        return run_repl(cli).await;
+    }
+
+    let command = cli.command.ok_or("No command specified. Use --help for usage or --repl for interactive mode.")?;
+
     let loader = QueryLoader::new();
 
-    match cli.command {
+    match command {
         Commands::Validate => {
             cmd_validate(&loader, &cli.queries)?;
         }
@@ -1267,6 +1293,27 @@ async fn cmd_scratch_promote(
     println!("  From: {}", stats.scratch_table);
     println!("  To: {}", stats.production_table);
     println!("  Partition: {}", stats.partition_key);
+
+    Ok(())
+}
+
+async fn run_repl(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
+    use bqdrift::repl::{ReplSession, InteractiveRepl, AsyncJsonRpcServer, ServerConfig};
+
+    let is_tty = atty::is(atty::Stream::Stdin);
+    let force_server = cli.server;
+
+    if is_tty && !force_server {
+        let session = ReplSession::new(cli.project, cli.queries);
+        let mut repl = InteractiveRepl::new(session)?;
+        repl.run().await?;
+    } else {
+        let config = ServerConfig::new(cli.project, cli.queries)
+            .with_max_sessions(cli.max_sessions)
+            .with_idle_timeout(cli.idle_timeout)
+            .with_max_idle_timeout(cli.max_idle_timeout);
+        AsyncJsonRpcServer::run(config).await?;
+    }
 
     Ok(())
 }

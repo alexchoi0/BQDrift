@@ -47,6 +47,9 @@ pub enum BqDriftError {
     #[error("Invariant check failed: {0}")]
     InvariantFailed(String),
 
+    #[error("REPL error: {0}")]
+    Repl(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
