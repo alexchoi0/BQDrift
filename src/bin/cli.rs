@@ -195,6 +195,20 @@ enum ScratchAction {
         #[arg(long, env = "BQDRIFT_SCRATCH_PROJECT")]
         project: String,
     },
+    /// Promote scratch table to production (copy without re-executing query)
+    Promote {
+        /// Query name
+        #[arg(long)]
+        query: String,
+
+        /// Partition key (e.g., 2024-01-15)
+        #[arg(long)]
+        partition: String,
+
+        /// Scratch project
+        #[arg(long, env = "BQDRIFT_SCRATCH_PROJECT")]
+        scratch_project: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -321,6 +335,10 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             match action {
                 ScratchAction::List { project } => {
                     cmd_scratch_list(&project).await?;
+                }
+                ScratchAction::Promote { query, partition, scratch_project } => {
+                    let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
+                    cmd_scratch_promote(&loader, &cli.queries, &project, &scratch_project, &query, &partition).await?;
                 }
             }
         }
@@ -546,8 +564,8 @@ async fn cmd_run(
             }
         }
 
-        println!("\nTo promote to production, run:");
-        println!("  bqdrift run --query {} --partition {}", stats.query_name, stats.partition_key);
+        println!("\nTo promote to production (copy scratch data):");
+        println!("  bqdrift scratch promote --query {} --partition {} --scratch-project {}", stats.query_name, stats.partition_key, scratch_project);
 
         return Ok(());
     }
@@ -1210,6 +1228,45 @@ async fn cmd_scratch_list(project: &str) -> Result<(), Box<dyn std::error::Error
             println!("  {}", table);
         }
     }
+
+    Ok(())
+}
+
+async fn cmd_scratch_promote(
+    loader: &QueryLoader,
+    queries_path: &PathBuf,
+    production_project: &str,
+    scratch_project: &str,
+    query_name: &str,
+    partition_str: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use bqdrift::executor::{ScratchConfig, ScratchWriter};
+
+    let queries = loader.load_dir(queries_path)?;
+
+    let query = queries.iter()
+        .find(|q| q.name == query_name)
+        .ok_or_else(|| format!("Query '{}' not found", query_name))?;
+
+    let partition_type = &query.destination.partition.partition_type;
+    let partition_key = parse_partition_key(partition_str, partition_type)?;
+
+    info!("Promoting scratch to production");
+    info!("  Scratch project: {}", scratch_project);
+    info!("  Production project: {}", production_project);
+
+    let scratch_client = BqClient::new(scratch_project).await?;
+    let production_client = BqClient::new(production_project).await?;
+
+    let config = ScratchConfig::new(scratch_project.to_string());
+    let scratch_writer = ScratchWriter::new(scratch_client, config);
+
+    let stats = scratch_writer.promote_to_production(query, &partition_key, &production_client).await?;
+
+    println!("\n✓ Promoted {} to production", stats.query_name);
+    println!("  From: {}", stats.scratch_table);
+    println!("  To: {}", stats.production_table);
+    println!("  Partition: {}", stats.partition_key);
 
     Ok(())
 }
