@@ -47,7 +47,7 @@ bqdrift --queries ./queries show daily_user_stats
 bqdrift --queries ./queries --project my-gcp-project run --dry-run
 
 # Run specific query for a date
-bqdrift --queries ./queries --project my-gcp-project run --query daily_user_stats --date 2024-06-15
+bqdrift --queries ./queries --project my-gcp-project run --query daily_user_stats --partition 2024-06-15
 
 # Backfill a date range
 bqdrift --queries ./queries --project my-gcp-project backfill daily_user_stats --from 2024-06-01 --to 2024-06-30
@@ -56,27 +56,27 @@ bqdrift --queries ./queries --project my-gcp-project backfill daily_user_stats -
 bqdrift --project my-gcp-project init --dataset bqdrift
 ```
 
-### Partition Date Formats
+### Partition Key Formats
 
-The CLI accepts flexible date formats based on the query's partition type:
+The CLI accepts flexible partition key formats based on the query's partition type:
 
 | Partition Type | Format | Example |
 |----------------|--------|---------|
-| `HOUR` | `YYYY-MM-DDTHH` | `--date 2024-06-15T10` |
-| `DAY` | `YYYY-MM-DD` | `--date 2024-06-15` |
-| `MONTH` | `YYYY-MM` | `--date 2024-06` |
-| `YEAR` | `YYYY` | `--date 2024` |
-| `RANGE` | integer | `--date 12345` |
+| `HOUR` | `YYYY-MM-DDTHH` | `--partition 2024-06-15T10` |
+| `DAY` | `YYYY-MM-DD` | `--partition 2024-06-15` |
+| `MONTH` | `YYYY-MM` | `--partition 2024-06` |
+| `YEAR` | `YYYY` | `--partition 2024` |
+| `RANGE` | integer | `--partition 12345` |
 
 ```bash
 # Hourly partitioned query
-bqdrift run --query hourly_events --date 2024-06-15T10
+bqdrift run --query hourly_events --partition 2024-06-15T10
 
 # Monthly partitioned query
 bqdrift backfill monthly_summary --from 2024-01 --to 2024-06
 
 # Yearly partitioned query
-bqdrift run --query annual_report --date 2024
+bqdrift run --query annual_report --partition 2024
 ```
 
 ### CLI Commands
@@ -452,13 +452,13 @@ versions:
 
 ```bash
 # Run with invariant checks (default)
-bqdrift run --query daily_user_stats --date 2024-12-01
+bqdrift run --query daily_user_stats --partition 2024-12-01
 
 # Skip invariant checks
 bqdrift run --query daily_user_stats --skip-invariants
 
 # Run invariants only (no query execution)
-bqdrift check daily_user_stats --date 2024-12-01
+bqdrift check daily_user_stats --partition 2024-12-01
 bqdrift check daily_user_stats --before  # Only before checks
 bqdrift check daily_user_stats --after   # Only after checks
 ```

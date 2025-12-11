@@ -46,15 +46,15 @@ enum Commands {
         detailed: bool,
     },
 
-    /// Run queries for a specific date
+    /// Run queries for a specific partition
     Run {
         /// Query name (runs all if not specified)
         #[arg(short, long)]
         query: Option<String>,
 
-        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024). Defaults to today.
+        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024, or integer for RANGE). Defaults to today.
         #[arg(short, long)]
-        date: Option<String>,
+        partition: Option<String>,
 
         /// Dry run - validate and show SQL without executing
         #[arg(long)]
@@ -92,9 +92,9 @@ enum Commands {
         /// Query name
         query: String,
 
-        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024). Defaults to today.
+        /// Partition key (e.g., 2024-01-15, 2024-01-15T10, 2024-01, 2024, or integer for RANGE). Defaults to today.
         #[arg(short, long)]
-        date: Option<String>,
+        partition: Option<String>,
 
         /// Run only before checks
         #[arg(long)]
@@ -256,9 +256,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_list(&loader, &cli.queries, detailed)?;
         }
 
-        Commands::Run { query, date, dry_run, skip_invariants } => {
+        Commands::Run { query, partition, dry_run, skip_invariants } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
-            cmd_run(&loader, &cli.queries, &project, query, date, dry_run, skip_invariants).await?;
+            cmd_run(&loader, &cli.queries, &project, query, partition, dry_run, skip_invariants).await?;
         }
 
         Commands::Backfill { query, from, to, dry_run, skip_invariants } => {
@@ -266,9 +266,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_backfill(&loader, &cli.queries, &project, &query, from, to, dry_run, skip_invariants).await?;
         }
 
-        Commands::Check { query, date, before, after } => {
+        Commands::Check { query, partition, before, after } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
-            cmd_check(&loader, &cli.queries, &project, &query, date, before, after).await?;
+            cmd_check(&loader, &cli.queries, &project, &query, partition, before, after).await?;
         }
 
         Commands::Show { query, version } => {
@@ -414,7 +414,7 @@ async fn cmd_run(
     queries_path: &PathBuf,
     project: &str,
     query_name: Option<String>,
-    date: Option<String>,
+    partition: Option<String>,
     dry_run: bool,
     skip_invariants: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -435,8 +435,8 @@ async fn cmd_run(
 
         for query in queries_to_run {
             let partition_type = &query.destination.partition.partition_type;
-            let partition_key = match &date {
-                Some(d) => parse_partition_key(d, partition_type)?,
+            let partition_key = match &partition {
+                Some(p) => parse_partition_key(p, partition_type)?,
                 None => default_partition_key(partition_type),
             };
 
@@ -476,8 +476,8 @@ async fn cmd_run(
                 .find(|q| q.name == name)
                 .ok_or_else(|| format!("Query '{}' not found", name))?;
             let partition_type = &query.destination.partition.partition_type;
-            let partition_key = match &date {
-                Some(d) => parse_partition_key(d, partition_type)?,
+            let partition_key = match &partition {
+                Some(p) => parse_partition_key(p, partition_type)?,
                 None => default_partition_key(partition_type),
             };
 
@@ -489,8 +489,8 @@ async fn cmd_run(
             print_stats(&stats, skip_invariants);
         }
         None => {
-            let partition_key = match &date {
-                Some(d) => parse_partition_key(d, &PartitionType::Day)?,
+            let partition_key = match &partition {
+                Some(p) => parse_partition_key(p, &PartitionType::Day)?,
                 None => default_partition_key(&PartitionType::Day),
             };
 
@@ -624,7 +624,7 @@ async fn cmd_check(
     queries_path: &PathBuf,
     project: &str,
     query_name: &str,
-    date: Option<String>,
+    partition: Option<String>,
     run_before: bool,
     run_after: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -635,8 +635,8 @@ async fn cmd_check(
         .ok_or_else(|| format!("Query '{}' not found", query_name))?;
 
     let partition_type = &query.destination.partition.partition_type;
-    let partition_key = match &date {
-        Some(d) => parse_partition_key(d, partition_type)?,
+    let partition_key = match &partition {
+        Some(p) => parse_partition_key(p, partition_type)?,
         None => default_partition_key(partition_type),
     };
     let date_for_version = partition_key.to_naive_date();
