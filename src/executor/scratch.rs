@@ -251,6 +251,78 @@ impl ScratchWriter {
     pub async fn list_tables(&self) -> Result<Vec<String>> {
         self.client.list_tables(SCRATCH_DATASET).await
     }
+
+    pub async fn promote_to_production(
+        &self,
+        query_def: &QueryDef,
+        partition_key: &PartitionKey,
+        production_client: &BqClient,
+    ) -> Result<PromoteStats> {
+        let scratch_table = self.scratch_table_fqn(query_def);
+        let production_table = format!(
+            "{}.{}.{}",
+            production_client.project_id(),
+            query_def.destination.dataset,
+            query_def.destination.table
+        );
+
+        let partition_field = query_def
+            .destination
+            .partition
+            .field
+            .as_deref()
+            .unwrap_or("date");
+
+        let partition_condition = match partition_key {
+            PartitionKey::Hour(_) => format!(
+                "TIMESTAMP_TRUNC(target.{}, HOUR) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Day(_) => format!(
+                "target.{} = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Month { .. } => format!(
+                "DATE_TRUNC(target.{}, MONTH) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Year(_) => format!(
+                "DATE_TRUNC(target.{}, YEAR) = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+            PartitionKey::Range(_) => format!(
+                "target.{} = {}",
+                partition_field,
+                partition_key.sql_literal()
+            ),
+        };
+
+        let merge_sql = format!(
+            r#"
+            MERGE `{production_table}` AS target
+            USING `{scratch_table}` AS source
+            ON FALSE
+            WHEN NOT MATCHED BY SOURCE AND {partition_condition} THEN DELETE
+            WHEN NOT MATCHED BY TARGET THEN INSERT ROW
+            "#,
+            production_table = production_table,
+            scratch_table = scratch_table,
+            partition_condition = partition_condition,
+        );
+
+        production_client.execute_query(&merge_sql).await?;
+
+        Ok(PromoteStats {
+            query_name: query_def.name.clone(),
+            partition_key: partition_key.clone(),
+            scratch_table,
+            production_table,
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -263,6 +335,14 @@ pub struct ScratchWriteStats {
     pub rows_written: Option<i64>,
     pub bytes_processed: Option<i64>,
     pub invariant_report: Option<InvariantReport>,
+}
+
+#[derive(Debug, Clone)]
+pub struct PromoteStats {
+    pub query_name: String,
+    pub partition_key: PartitionKey,
+    pub scratch_table: String,
+    pub production_table: String,
 }
 
 #[cfg(test)]

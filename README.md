@@ -93,6 +93,7 @@ bqdrift run --query annual_report --partition 2024
 | `sync` | Re-run drifted partitions |
 | `audit` | Audit sources against executed SQL for modifications |
 | `scratch list` | List scratch tables in a project |
+| `scratch promote` | Copy scratch table to production |
 | `graph` | Show query dependency graph |
 | `init` | Create tracking tables in BigQuery |
 
@@ -923,17 +924,38 @@ Tables auto-expire based on partition type (or `--scratch-ttl` override):
 # List scratch tables
 bqdrift scratch list --project my-scratch-project
 
-# Or with environment variable
+# Promote scratch to production (copies data without re-executing query)
+bqdrift scratch promote --query daily_user_stats --partition 2024-06-15 --scratch-project my-scratch-project
+
+# Or with environment variables
 export BQDRIFT_SCRATCH_PROJECT=my-scratch-project
+export GCP_PROJECT_ID=my-production-project
 bqdrift scratch list
+bqdrift scratch promote --query daily_user_stats --partition 2024-06-15
 ```
 
-### Example Output
+### Promoting to Production
+
+After validating data in scratch, use `scratch promote` to copy the data to production. This is more cost-effective than re-running the query because:
+
+1. **No query re-execution**: Data is copied directly from scratch table
+2. **No invariant timing issues**: Invariants already validated against the exact data being promoted
+3. **Faster**: Simple MERGE copy vs full query execution
 
 ```bash
-$ bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scratch-project
+$ bqdrift scratch promote --query daily_user_stats --partition 2024-06-15 --scratch-project my-scratch
 
-[scratch] Writing to: my-scratch-project.bqdrift_scratch.analytics__daily_user_stats
+✓ Promoted daily_user_stats to production
+  From: my-scratch.bqdrift_scratch.analytics__daily_user_stats
+  To: my-production.analytics.daily_user_stats
+  Partition: 2024-06-15
+```
+
+### Example Workflow
+
+```bash
+# 1. Run to scratch for validation
+$ bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scratch-project
 
 ✓ daily_user_stats v3 (scratch)
   Partition: 2024-06-15
@@ -943,8 +965,16 @@ $ bqdrift run --query daily_user_stats --partition 2024-06-15 --scratch my-scrat
     ✓ min_rows: 12345 >= 100
     ✓ null_check: 0.0% nulls (max 5.0%)
 
-To run against production:
-  bqdrift run --query daily_user_stats --partition 2024-06-15
+To promote to production (copy scratch data):
+  bqdrift scratch promote --query daily_user_stats --partition 2024-06-15 --scratch-project my-scratch-project
+
+# 2. Review data in scratch if needed
+# SELECT * FROM `my-scratch.bqdrift_scratch.analytics__daily_user_stats`
+
+# 3. Promote to production
+$ bqdrift scratch promote --query daily_user_stats --partition 2024-06-15 --scratch-project my-scratch-project
+
+✓ Promoted daily_user_stats to production
 ```
 
 ## Tracking Tables
