@@ -232,6 +232,6 @@ fn test_needs_rerun_filters_correctly() {
     let needs_rerun = report.needs_rerun();
 
     assert_eq!(needs_rerun.len(), 1);
-    assert_eq!(needs_rerun[0].partition_date, date2);
+    assert_eq!(needs_rerun[0].partition_date(), date2);
     assert_eq!(needs_rerun[0].state, DriftState::NeverRun);
 }

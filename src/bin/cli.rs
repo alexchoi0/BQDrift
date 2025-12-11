@@ -423,7 +423,7 @@ async fn cmd_run(
             }
 
             for failure in &report.failures {
-                eprintln!("\x1b[31m✗\x1b[0m {} ({}): {}", failure.query_name, failure.partition_date, failure.error);
+                eprintln!("\x1b[31m✗\x1b[0m {} ({}): {}", failure.query_name, failure.partition_key, failure.error);
             }
 
             println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
@@ -434,7 +434,7 @@ async fn cmd_run(
 }
 
 fn print_stats(stats: &WriteStats, skip_invariants: bool) {
-    println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_date);
+    println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_key);
 
     if !skip_invariants {
         if let Some(report) = &stats.invariant_report {
@@ -525,7 +525,7 @@ async fn cmd_backfill(
     }
 
     for failure in &report.failures {
-        eprintln!("\x1b[31m✗\x1b[0m {}: {}", failure.partition_date, failure.error);
+        eprintln!("\x1b[31m✗\x1b[0m {}: {}", failure.partition_key, failure.error);
     }
 
     println!("\n{} succeeded, {} failed", report.stats.len(), report.failures.len());
@@ -806,7 +806,7 @@ async fn cmd_sync(
                     DriftState::Current => "current",
                 };
 
-                println!("  {} [{}] v{}", partition.partition_date, state_str, partition.current_version);
+                println!("  {} [{}] v{}", partition.partition_key, state_str, partition.current_version);
 
                 if partition.state == DriftState::SqlChanged {
                     if let (Some(executed_b64), Some(current_sql)) = (&partition.executed_sql_b64, &partition.current_sql) {

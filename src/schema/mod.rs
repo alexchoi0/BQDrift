@@ -5,5 +5,5 @@ mod cluster;
 
 pub use field::{BqType, Field, FieldMode};
 pub use table::Schema;
-pub use partition::{PartitionConfig, PartitionType};
+pub use partition::{PartitionConfig, PartitionType, PartitionKey};
 pub use cluster::ClusterConfig;

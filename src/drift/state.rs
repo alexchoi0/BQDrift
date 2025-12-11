@@ -1,6 +1,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use crate::schema::PartitionKey;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PartitionState {
@@ -19,6 +20,12 @@ pub struct PartitionState {
     pub rows_written: Option<i64>,
     pub bytes_processed: Option<i64>,
     pub status: ExecutionStatus,
+}
+
+impl PartitionState {
+    pub fn partition_key(&self) -> PartitionKey {
+        PartitionKey::Day(self.partition_date)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,13 +67,19 @@ impl DriftState {
 #[derive(Debug, Clone)]
 pub struct PartitionDrift {
     pub query_name: String,
-    pub partition_date: NaiveDate,
+    pub partition_key: PartitionKey,
     pub state: DriftState,
     pub current_version: u32,
     pub executed_version: Option<u32>,
     pub caused_by: Option<String>,
     pub executed_sql_b64: Option<String>,
     pub current_sql: Option<String>,
+}
+
+impl PartitionDrift {
+    pub fn partition_date(&self) -> NaiveDate {
+        self.partition_key.to_naive_date()
+    }
 }
 
 #[derive(Debug, Default)]
