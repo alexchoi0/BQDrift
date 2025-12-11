@@ -160,7 +160,7 @@ impl QueryValidator {
     fn check_duplicate_revisions(query: &QueryDef, warnings: &mut Vec<ValidationWarning>) {
         for version in &query.versions {
             let mut seen = std::collections::HashSet::new();
-            for revision in &version.sql_revisions {
+            for revision in &version.revisions {
                 if !seen.insert(revision.revision) {
                     warnings.push(ValidationWarning {
                         code: "W002",
@@ -227,7 +227,7 @@ impl QueryValidator {
                 });
             }
 
-            for revision in &version.sql_revisions {
+            for revision in &version.revisions {
                 if !revision.sql_content.contains("@partition_date")
                     && !revision.sql_content.contains("@run_date")
                     && !revision.sql_content.contains("@execution_date") {
