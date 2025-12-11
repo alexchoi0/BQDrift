@@ -69,8 +69,8 @@ pub struct InvariantDef {
 pub enum InvariantCheck {
     /// Row count check - validates min/max row counts
     RowCount {
-        #[serde(flatten, default)]
-        source: Option<SqlSource>,
+        #[serde(default)]
+        source: Option<String>,
         #[serde(default)]
         min: Option<i64>,
         #[serde(default)]
@@ -79,16 +79,16 @@ pub enum InvariantCheck {
 
     /// Null percentage check - validates % of nulls in a column
     NullPercentage {
-        #[serde(flatten, default)]
-        source: Option<SqlSource>,
+        #[serde(default)]
+        source: Option<String>,
         column: String,
         max_percentage: f64,
     },
 
     /// Value range check - validates min/max values for a column
     ValueRange {
-        #[serde(flatten, default)]
-        source: Option<SqlSource>,
+        #[serde(default)]
+        source: Option<String>,
         column: String,
         #[serde(default)]
         min: Option<f64>,
@@ -98,23 +98,14 @@ pub enum InvariantCheck {
 
     /// Distinct count check - validates cardinality of a column
     DistinctCount {
-        #[serde(flatten, default)]
-        source: Option<SqlSource>,
+        #[serde(default)]
+        source: Option<String>,
         column: String,
         #[serde(default)]
         min: Option<i64>,
         #[serde(default)]
         max: Option<i64>,
     },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum SqlSource {
-    /// Path to SQL file (relative to YAML)
-    Source(String),
-    /// Inline SQL string
-    SourceInline(String),
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,17 +154,17 @@ severity: error
         let yaml = r#"
 name: custom_row_count
 type: row_count
-source: checks/filtered.sql
+source: SELECT * FROM filtered_table
 min: 50
 severity: error
 "#;
         let inv: InvariantDef = serde_yaml::from_str(yaml).unwrap();
         match inv.check {
-            InvariantCheck::RowCount { source: Some(SqlSource::Source(path)), min, .. } => {
-                assert_eq!(path, "checks/filtered.sql");
+            InvariantCheck::RowCount { source: Some(sql), min, .. } => {
+                assert_eq!(sql, "SELECT * FROM filtered_table");
                 assert_eq!(min, Some(50));
             }
-            _ => panic!("Expected RowCount with Source"),
+            _ => panic!("Expected RowCount with source"),
         }
     }
 
@@ -245,7 +236,7 @@ severity: warning
 before:
   - name: source_check
     type: row_count
-    source: checks/source.sql
+    source: SELECT 1 WHERE FALSE
     max: 0
     severity: error
 after:
@@ -351,7 +342,7 @@ add:
   before:
     - name: pre_check
       type: row_count
-      source: checks/pre.sql
+      source: SELECT 1 WHERE FALSE
       max: 0
       severity: error
 "#;
@@ -368,22 +359,22 @@ add:
     }
 
     #[test]
-    fn test_parse_row_count_with_inline_source() {
+    fn test_parse_row_count_with_multiline_source() {
         let yaml = r#"
 name: inline_check
 type: row_count
-source-inline: |
+source: |
   SELECT * FROM my_table WHERE status = 'active'
 min: 10
 severity: warning
 "#;
         let inv: InvariantDef = serde_yaml::from_str(yaml).unwrap();
         match inv.check {
-            InvariantCheck::RowCount { source: Some(SqlSource::SourceInline(sql)), min, .. } => {
+            InvariantCheck::RowCount { source: Some(sql), min, .. } => {
                 assert!(sql.contains("SELECT * FROM my_table"));
                 assert_eq!(min, Some(10));
             }
-            _ => panic!("Expected RowCount with SourceInline"),
+            _ => panic!("Expected RowCount with source"),
         }
     }
 }

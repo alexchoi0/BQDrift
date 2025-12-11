@@ -9,7 +9,7 @@ destination:
 versions:
   - version: 1
     effective_from: 2024-01-01
-    source: simple_query.v1.sql
+    source: ${{ file: simple_query.v1.sql }}
     schema:
       - name: date
         type: DATE
@@ -22,7 +22,7 @@ versions:
       before:
         - name: source_data_check
           type: row_count
-          source-inline: |
+          source: |
             SELECT 1 WHERE FALSE
           max: 0
           severity: error
@@ -50,7 +50,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    source: simple_query.v1.sql
+    source: ${{ file: simple_query.v1.sql }}
     schema: ${{ versions.1.schema }}
 
     invariants:

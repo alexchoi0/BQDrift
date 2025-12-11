@@ -2,7 +2,7 @@ use chrono::NaiveDate;
 use crate::error::Result;
 use crate::dsl::Destination;
 use crate::executor::BqClient;
-use super::types::{Severity, InvariantsDef, InvariantDef, InvariantCheck, SqlSource};
+use super::types::{Severity, InvariantsDef, InvariantDef, InvariantCheck};
 use super::result::CheckResult;
 
 pub struct ResolvedInvariant {
@@ -267,46 +267,30 @@ fn resolve_invariant_def(inv: &InvariantDef) -> ResolvedInvariant {
 fn resolve_check(check: &InvariantCheck) -> ResolvedCheck {
     match check {
         InvariantCheck::RowCount { source, min, max } => {
-            let source_sql = source.as_ref().map(|s| match s {
-                SqlSource::Source(path) => path.clone(),
-                SqlSource::SourceInline(sql) => sql.clone(),
-            });
             ResolvedCheck::RowCount {
-                source_sql,
+                source_sql: source.clone(),
                 min: *min,
                 max: *max,
             }
         }
         InvariantCheck::NullPercentage { source, column, max_percentage } => {
-            let source_sql = source.as_ref().map(|s| match s {
-                SqlSource::Source(path) => path.clone(),
-                SqlSource::SourceInline(sql) => sql.clone(),
-            });
             ResolvedCheck::NullPercentage {
-                source_sql,
+                source_sql: source.clone(),
                 column: column.clone(),
                 max_percentage: *max_percentage,
             }
         }
         InvariantCheck::ValueRange { source, column, min, max } => {
-            let source_sql = source.as_ref().map(|s| match s {
-                SqlSource::Source(path) => path.clone(),
-                SqlSource::SourceInline(sql) => sql.clone(),
-            });
             ResolvedCheck::ValueRange {
-                source_sql,
+                source_sql: source.clone(),
                 column: column.clone(),
                 min: *min,
                 max: *max,
             }
         }
         InvariantCheck::DistinctCount { source, column, min, max } => {
-            let source_sql = source.as_ref().map(|s| match s {
-                SqlSource::Source(path) => path.clone(),
-                SqlSource::SourceInline(sql) => sql.clone(),
-            });
             ResolvedCheck::DistinctCount {
-                source_sql,
+                source_sql: source.clone(),
                 column: column.clone(),
                 min: *min,
                 max: *max,

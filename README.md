@@ -179,7 +179,7 @@ tags: [analytics, users, daily]
 versions:
   - version: 1
     effective_from: 2024-01-15
-    source: daily_user_stats.v1.sql
+    source: ${{ file: daily_user_stats.v1.sql }}
     schema:
       - name: date
         type: DATE
@@ -236,20 +236,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 ## SQL Source Options
 
-Query SQL can be defined as a file reference or inline:
+Query SQL can be defined as inline or via file include:
 
 ```yaml
 versions:
-  # File reference (relative to YAML)
+  # Inline SQL
   - version: 1
     effective_from: 2024-01-01
-    source: query.v1.sql
-    schema: [...]
-
-  # Inline SQL
-  - version: 2
-    effective_from: 2024-06-01
-    source-inline: |
+    source: |
       SELECT
         DATE(created_at) AS date,
         COUNT(*) AS count
@@ -257,6 +251,64 @@ versions:
       WHERE DATE(created_at) = @partition_date
       GROUP BY 1
     schema: [...]
+
+  # File include (relative to YAML)
+  - version: 2
+    effective_from: 2024-06-01
+    source: ${{ file: query.v2.sql }}
+    schema: [...]
+```
+
+## File Includes
+
+Use `${{ file: path }}` to include external YAML or SQL files. This works for any YAML value:
+
+```yaml
+# Include SQL from file
+source: ${{ file: queries/complex_query.sql }}
+
+# Include schema from file
+schema: ${{ file: schemas/large_schema.yaml }}
+
+# Include invariants from file
+invariants: ${{ file: invariants/standard_checks.yaml }}
+```
+
+File paths are relative to the YAML file containing the include. Includes are processed recursively, so included files can contain their own `${{ file: }}` references.
+
+**Circular include detection**: The preprocessor detects and prevents circular includes.
+
+### Example: Externalizing Large Schemas
+
+**queries/analytics/daily_stats.yaml**
+```yaml
+name: daily_stats
+destination:
+  dataset: analytics
+  table: daily_stats
+  partition:
+    field: date
+    type: DAY
+
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    source: ${{ file: daily_stats.v1.sql }}
+    schema: ${{ file: schemas/daily_stats_schema.yaml }}
+```
+
+**queries/analytics/schemas/daily_stats_schema.yaml**
+```yaml
+- name: date
+  type: DATE
+- name: region
+  type: STRING
+- name: user_tier
+  type: STRING
+- name: unique_users
+  type: INT64
+- name: total_events
+  type: INT64
 ```
 
 ## Schema Versioning
@@ -267,7 +319,7 @@ When schema changes, create a new version:
 versions:
   - version: 1
     effective_from: 2024-01-15
-    source: daily_user_stats.v1.sql
+    source: ${{ file: daily_user_stats.v1.sql }}
     schema:
       - name: date
         type: DATE
@@ -276,7 +328,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    source: daily_user_stats.v2.sql
+    source: ${{ file: daily_user_stats.v2.sql }}
     schema:
       base: ${{ versions.1.schema }}
       add:
@@ -303,7 +355,7 @@ Change a column's type or properties without rewriting the full schema:
 versions:
   - version: 1
     effective_from: 2024-01-15
-    source: query.v1.sql
+    source: ${{ file: query.v1.sql }}
     schema:
       - name: date
         type: DATE
@@ -312,7 +364,7 @@ versions:
 
   - version: 2
     effective_from: 2024-06-01
-    source: query.v2.sql
+    source: ${{ file: query.v2.sql }}
     schema:
       base: ${{ versions.1.schema }}
       modify:
@@ -334,16 +386,16 @@ Fix SQL bugs without creating a new schema version:
 versions:
   - version: 2
     effective_from: 2024-03-01
-    source: query.v2.sql
+    source: ${{ file: query.v2.sql }}
     revisions:
       - revision: 1
         effective_from: 2024-03-15
-        source: query.v2.r1.sql
+        source: ${{ file: query.v2.r1.sql }}
         reason: Fixed null handling in join
         backfill_since: 2024-03-01
       - revision: 2
         effective_from: 2024-04-01
-        source: query.v2.r2.sql
+        source: ${{ file: query.v2.r2.sql }}
         reason: Performance optimization
     schema: ${{ versions.1.schema }}
 ```
@@ -361,14 +413,14 @@ Validate data quality with invariant checks that run **before** and/or **after**
 versions:
   - version: 1
     effective_from: 2024-01-15
-    source: daily_user_stats.v1.sql
+    source: ${{ file: daily_user_stats.v1.sql }}
     schema: [...]
 
     invariants:
       before:
         - name: source_has_data
           type: row_count
-          source-inline: |
+          source: |
             SELECT 1 FROM raw.events
             WHERE DATE(created_at) = @partition_date
           min: 1
@@ -416,21 +468,29 @@ versions:
 | `error` | Skip query execution | Mark run as failed |
 | `warning` | Log warning, continue | Log warning, continue |
 
-### SQL Source Options
+### Source Options
 
 ```yaml
-# File path (relative to YAML)
+# File include
 - name: check1
   type: row_count
-  source: checks/my_check.sql
+  source: ${{ file: checks/my_check.sql }}
   min: 1
 
 # Inline SQL
 - name: check2
   type: row_count
-  source-inline: SELECT * FROM my_table WHERE status = 'active'
+  source: SELECT * FROM my_table WHERE status = 'active'
   min: 10
   max: 1000
+
+# Multiline inline SQL
+- name: check3
+  type: row_count
+  source: |
+    SELECT 1 FROM raw.events
+    WHERE DATE(created_at) = @partition_date
+  min: 1
 ```
 
 ### SQL Placeholders
@@ -856,12 +916,12 @@ Instead of modifying an existing source file:
 versions:
   - version: 1
     effective_from: 2024-01-01
-    source: query.v1.sql  # Don't modify this
+    source: ${{ file: query.v1.sql }}  # Don't modify this file
     schema: [...]
 
   - version: 2
     effective_from: 2024-07-01  # New version takes effect
-    source: query.v2.sql        # New SQL file
+    source: ${{ file: query.v2.sql }}  # New SQL file
     schema: [...]
 ```
 
@@ -871,11 +931,11 @@ versions:
 versions:
   - version: 1
     effective_from: 2024-01-01
-    source: query.v1.sql  # Don't modify this
+    source: ${{ file: query.v1.sql }}  # Don't modify this file
     revisions:
       - revision: 1
         effective_from: 2024-07-01
-        source: query.v1.r1.sql   # New SQL file with fix
+        source: ${{ file: query.v1.r1.sql }}  # New SQL file with fix
         reason: Fixed null handling
         backfill_since: 2024-01-01  # Backfill all affected partitions
     schema: [...]
