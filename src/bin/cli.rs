@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use chrono::{Datelike, NaiveDate, Timelike};
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -6,7 +6,8 @@ use tracing::{info, error, warn};
 use tracing_subscriber::EnvFilter;
 
 use bqdrift::{QueryLoader, QueryValidator, Runner, CheckStatus, Severity, InvariantChecker, resolve_invariants_def};
-use bqdrift::{DriftDetector, DriftState, decode_sql, format_sql_diff, has_changes};
+use bqdrift::{DriftDetector, DriftState, decode_sql, format_sql_diff, has_changes, ImmutabilityChecker, ImmutabilityViolation, SourceAuditor, SourceStatus, AuditTableRow};
+use tabled::{Table, settings::Style};
 use bqdrift::executor::BqClient;
 use bqdrift::error::{BqDriftError, BigQueryError};
 use bqdrift::executor::WriteStats;
@@ -142,7 +143,41 @@ enum Commands {
         /// Dataset for tracking table
         #[arg(long, default_value = "bqdrift")]
         tracking_dataset: String,
+
+        /// Allow modifying SQL sources that have already been executed (breaks immutability)
+        #[arg(long)]
+        allow_source_mutation: bool,
     },
+
+    /// Audit source files against executed SQL to detect modifications
+    Audit {
+        /// Query name (audits all if not specified)
+        #[arg(short, long)]
+        query: Option<String>,
+
+        /// Show only modified sources
+        #[arg(long)]
+        modified_only: bool,
+
+        /// Show SQL diff for modified sources
+        #[arg(long)]
+        diff: bool,
+
+        /// Output format: table, yaml, json
+        #[arg(short, long, default_value = "table")]
+        output: OutputFormat,
+
+        /// Dataset for tracking table
+        #[arg(long, default_value = "bqdrift")]
+        tracking_dataset: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum OutputFormat {
+    Table,
+    Yaml,
+    Json,
 }
 
 #[tokio::main]
@@ -245,13 +280,17 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_init(&project, &dataset).await?;
         }
 
-        Commands::Sync { from, to, dry_run, skip_invariants: _, tracking_dataset } => {
+        Commands::Sync { from, to, dry_run, skip_invariants: _, tracking_dataset, allow_source_mutation } => {
             let project = if dry_run {
                 cli.project.unwrap_or_default()
             } else {
                 cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?
             };
-            cmd_sync(&loader, &cli.queries, &project, from, to, dry_run, &tracking_dataset).await?;
+            cmd_sync(&loader, &cli.queries, &project, from, to, dry_run, &tracking_dataset, allow_source_mutation).await?;
+        }
+
+        Commands::Audit { query, modified_only, diff, output, tracking_dataset: _ } => {
+            cmd_audit(&loader, &cli.queries, query, modified_only, diff, output)?;
         }
     }
 
@@ -796,6 +835,7 @@ async fn cmd_sync(
     to: Option<String>,
     dry_run: bool,
     _tracking_dataset: &str,
+    allow_source_mutation: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let queries = loader.load_dir(queries_path)?;
     let yaml_contents = loader.load_yaml_contents(queries_path)?;
@@ -814,8 +854,22 @@ async fn cmd_sync(
 
     info!("Detecting drift from {} to {}", from, to);
 
+    // TODO: Fetch stored states from BigQuery tracking table
+    // For now, we pass empty states (no immutability check possible without stored states)
+    let stored_states = vec![];
+
+    if !allow_source_mutation && !stored_states.is_empty() {
+        let immutability_checker = ImmutabilityChecker::new(&queries);
+        let immutability_report = immutability_checker.check(&stored_states);
+
+        if !immutability_report.is_clean() {
+            print_immutability_violations(&immutability_report.violations);
+            return Err("Source immutability violated. Use --allow-source-mutation to override.".into());
+        }
+    }
+
     let detector = DriftDetector::new(queries.clone(), yaml_contents);
-    let report = detector.detect(&[], from, to)?;
+    let report = detector.detect(&stored_states, from, to)?;
 
     let drifted: Vec<_> = report.needs_rerun();
 
@@ -887,6 +941,139 @@ async fn cmd_sync(
         println!("Run without --dry-run to execute {} drifted partitions", drifted.len());
     } else {
         println!("\nSync execution not yet implemented. Use --dry-run to preview changes.");
+    }
+
+    Ok(())
+}
+
+fn print_immutability_violations(violations: &[ImmutabilityViolation]) {
+    eprintln!("\n\x1b[31m⚠️  IMMUTABILITY VIOLATION DETECTED\x1b[0m\n");
+    eprintln!("The following SQL sources have been modified after being executed:\n");
+
+    for violation in violations {
+        eprintln!("\x1b[1mQuery:\x1b[0m {}", violation.query_name);
+        eprintln!("\x1b[1mVersion:\x1b[0m {}", violation.version);
+        if let Some(rev) = violation.revision {
+            eprintln!("\x1b[1mRevision:\x1b[0m {}", rev);
+        }
+        eprintln!("\x1b[1mSource:\x1b[0m {}", violation.source);
+        eprintln!("\x1b[1mAffected partitions:\x1b[0m {} partitions", violation.affected_partitions.len());
+
+        if violation.affected_partitions.len() <= 5 {
+            for date in &violation.affected_partitions {
+                eprintln!("  - {}", date);
+            }
+        } else {
+            let first = violation.affected_partitions.first().unwrap();
+            let last = violation.affected_partitions.last().unwrap();
+            eprintln!("  {} to {} ({} partitions)", first, last, violation.affected_partitions.len());
+        }
+
+        eprintln!();
+        eprintln!("\x1b[1mDiff:\x1b[0m");
+        eprintln!("{}", format_sql_diff(&violation.stored_sql, &violation.current_sql));
+        eprintln!();
+    }
+
+    eprintln!("This breaks the immutability guarantee. Options:");
+    eprintln!("  1. Revert your changes to the source file");
+    eprintln!("  2. Create a new version with the updated SQL");
+    eprintln!("  3. Create a revision under the current version with backfill_since");
+    eprintln!("  4. Re-run with \x1b[33m--allow-source-mutation\x1b[0m to force (not recommended)");
+    eprintln!();
+}
+
+fn cmd_audit(
+    loader: &QueryLoader,
+    queries_path: &PathBuf,
+    query_filter: Option<String>,
+    modified_only: bool,
+    show_diff: bool,
+    output: OutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let queries = loader.load_dir(queries_path)?;
+
+    let queries_to_audit: Vec<_> = match &query_filter {
+        Some(name) => queries.iter().filter(|q| &q.name == name).cloned().collect(),
+        None => queries,
+    };
+
+    if queries_to_audit.is_empty() {
+        if let Some(name) = query_filter {
+            return Err(format!("Query '{}' not found", name).into());
+        }
+        println!("No queries found in {}", queries_path.display());
+        return Ok(());
+    }
+
+    info!("Auditing {} queries", queries_to_audit.len());
+
+    // TODO: Fetch stored states from BigQuery tracking table
+    // For now, we pass empty states (demonstration mode)
+    let stored_states = vec![];
+
+    let auditor = SourceAuditor::new(&queries_to_audit);
+    let report = auditor.audit(&stored_states);
+
+    let entries_to_show: Vec<_> = if modified_only {
+        report.entries.iter().filter(|e| e.status == SourceStatus::Modified).cloned().collect()
+    } else {
+        report.entries.clone()
+    };
+
+    if entries_to_show.is_empty() {
+        if modified_only {
+            println!("✓ No modified sources found");
+        } else {
+            println!("No source entries to display");
+        }
+        return Ok(());
+    }
+
+    match output {
+        OutputFormat::Yaml => {
+            let yaml = serde_yaml::to_string(&entries_to_show)?;
+            println!("{}", yaml);
+        }
+        OutputFormat::Json => {
+            let json = serde_json::to_string_pretty(&entries_to_show)?;
+            println!("{}", json);
+        }
+        OutputFormat::Table => {
+            println!("\nSource Audit Report\n");
+
+            let rows: Vec<AuditTableRow> = entries_to_show.iter().map(|e| AuditTableRow::from(e)).collect();
+            let mut table = Table::new(rows);
+            table.with(Style::markdown());
+            println!("{}", table);
+
+            println!("\nSummary:");
+            println!("  ✓ {} current", report.current_count());
+            println!("  ⚠ {} modified", report.modified_count());
+            println!("  ○ {} never executed", report.never_executed_count());
+
+            if show_diff && report.has_modifications() {
+                println!("\nModified Sources:\n");
+                for entry in report.modified_entries() {
+                    if let Some(stored_sql) = &entry.stored_sql {
+                        let version_str = match entry.revision {
+                            Some(rev) => format!("v{}.r{}", entry.version, rev),
+                            None => format!("v{}", entry.version),
+                        };
+                        println!("{}  {} ({})", entry.query_name, version_str, entry.source);
+                        println!("{}", format_sql_diff(stored_sql, &entry.current_sql));
+                        println!();
+                    }
+                }
+            }
+
+            if report.has_modifications() {
+                println!("Warning: Modified sources detected. Consider:");
+                println!("  - Creating new versions for schema changes");
+                println!("  - Creating revisions for bug fixes");
+                println!("  - Running 'bqdrift sync --allow-source-mutation' to force update");
+            }
+        }
     }
 
     Ok(())

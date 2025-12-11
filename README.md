@@ -13,6 +13,7 @@ bqdrift manages versioned OLAP queries for BigQuery with:
 - **YAML DSL** - Define queries in readable YAML with SQL files
 - **Invariant checks** - Validate data quality before/after execution
 - **Drift detection** - Automatically detect when queries need re-running
+- **Source immutability** - Detect unauthorized modifications to executed sources
 - **DAG dependencies** - Cascade re-runs to downstream queries
 - **Server-side execution** - All queries run on BigQuery, no data downloaded
 
@@ -90,8 +91,8 @@ bqdrift run --query annual_report --date 2024
 | `check <query>` | Run invariant checks only (no query execution) |
 | `status` | Show drift status (what needs re-running) |
 | `sync` | Re-run drifted partitions |
+| `audit` | Audit sources against executed SQL for modifications |
 | `graph` | Show query dependency graph |
-| `history <query>` | Show execution history |
 | `init` | Create tracking tables in BigQuery |
 
 ### Environment Variables
@@ -676,16 +677,196 @@ Total: 19 partitions
 Proceed? [y/N]
 ```
 
-### Execution History
+### Source Audit
+
+The `audit` command compares current source files against executed SQL stored in BigQuery to detect modifications:
 
 ```bash
-$ bqdrift history daily_user_stats --partition 2024-12-01
+# Audit all queries (default table format)
+$ bqdrift audit
 
-EXECUTED_AT          VERSION  SQL_CHECKSUM  STATUS   TRIGGERED_BY
-2024-12-03 10:00:00  3        abc123        SUCCESS  sync
-2024-12-02 14:00:00  3        def456        SUCCESS  sync
-2024-12-01 10:00:00  3        abc123        SUCCESS  run
+Source Audit Report
+
+| Query            | Version | Source                  | Status           | Partitions | Executed                 |
+|------------------|---------|-------------------------|------------------|------------|--------------------------|
+| daily_user_stats | v1      | daily_user_stats.v1.sql | ✓ current        | 45         | 2024-01-15 to 2024-03-01 |
+| daily_user_stats | v2      | daily_user_stats.v2.sql | ✓ current        | 90         | 2024-03-01 to 2024-06-01 |
+| daily_user_stats | v3      | daily_user_stats.v3.sql | ⚠ modified       | 30         | 2024-06-01 to 2024-07-01 |
+| daily_user_stats | v4      | daily_user_stats.v4.sql | ○ never_executed | -          | -                        |
+
+Summary:
+  ✓ 2 current
+  ⚠ 1 modified
+  ○ 1 never executed
+
+# Audit specific query
+$ bqdrift audit --query daily_user_stats
+
+# Show only modified sources
+$ bqdrift audit --modified-only
+
+# Show SQL diffs for modified sources
+$ bqdrift audit --diff
+
+# Combine options
+$ bqdrift audit --query daily_user_stats --modified-only --diff
 ```
+
+#### Output Formats
+
+Use `-o` / `--output` to choose the output format:
+
+```bash
+# Table format (default) - truncated display
+$ bqdrift audit -o table
+
+# YAML format - full SQL without truncation
+$ bqdrift audit -o yaml
+
+# JSON format - full SQL without truncation
+$ bqdrift audit -o json
+```
+
+YAML and JSON formats include complete SQL content without truncation, useful for programmatic access or detailed inspection. The `stored_sql` field is only included when it differs from `current_sql` (i.e., for modified sources):
+
+```yaml
+# Current source (stored_sql omitted since it matches current_sql)
+- query_name: daily_user_stats
+  version: 1
+  revision: null
+  source: daily_user_stats.v1.sql
+  status: current
+  current_sql: |
+    SELECT
+      DATE(created_at) AS date,
+      COUNT(*) AS count
+    FROM raw.events
+    WHERE DATE(created_at) = @partition_date
+    GROUP BY 1
+  partition_count: 45
+  first_executed: 2024-01-15T10:00:00Z
+  last_executed: 2024-03-01T10:00:00Z
+
+# Modified source (stored_sql included to show difference)
+- query_name: daily_user_stats
+  version: 2
+  revision: null
+  source: daily_user_stats.v2.sql
+  status: modified
+  current_sql: |
+    SELECT COUNT(DISTINCT user_id) AS count ...
+  stored_sql: |
+    SELECT COUNT(*) AS count ...
+  partition_count: 30
+  first_executed: 2024-03-01T10:00:00Z
+  last_executed: 2024-06-01T10:00:00Z
+```
+
+#### Audit Status Legend
+
+| Symbol | Status | Description |
+|--------|--------|-------------|
+| ✓ | `current` | Source matches executed SQL |
+| ⚠ | `modified` | Source differs from executed SQL |
+| ○ | `never_executed` | Source has never been run |
+
+## Source Immutability
+
+bqdrift enforces **source immutability** by default. Once a SQL source (version or revision) has been executed for any partition, it should not be modified. This ensures reproducibility and audit compliance.
+
+### Why Immutability?
+
+1. **Reproducibility** - Re-running a partition should produce the same result
+2. **Audit trail** - Know exactly what SQL was executed for each partition
+3. **Debugging** - Trace issues back to the exact query that ran
+4. **Compliance** - Meet data governance requirements
+
+### How It Works
+
+When you run `bqdrift sync`, the system:
+
+1. Retrieves the stored `executed_sql_b64` from `_bqdrift_state` for each version/revision
+2. Compares it against the current SQL source on disk
+3. If they differ, reports an **immutability violation**
+
+```bash
+$ bqdrift sync --from 2024-01-01 --to 2024-12-01
+
+⚠️  IMMUTABILITY VIOLATION DETECTED
+
+The following SQL sources have been modified after being executed:
+
+Query: analytics/daily_stats
+Version: 1
+Source: daily_stats.v1.sql
+Affected partitions: 182 partitions
+  2024-01-01 to 2024-06-30 (182 partitions)
+
+Diff:
+───────────────────────────────────────
+- SELECT COUNT(*) as count
++ SELECT COUNT(DISTINCT user_id) as count
+───────────────────────────────────────
+
+This breaks the immutability guarantee. Options:
+  1. Revert your changes to the source file
+  2. Create a new version with the updated SQL
+  3. Create a revision under the current version with backfill_since
+  4. Re-run with --allow-source-mutation to force (not recommended)
+```
+
+### Proper Ways to Change SQL
+
+Instead of modifying an existing source file:
+
+**Option 1: Create a new version** (schema change or major logic change)
+
+```yaml
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    source: query.v1.sql  # Don't modify this
+    schema: [...]
+
+  - version: 2
+    effective_from: 2024-07-01  # New version takes effect
+    source: query.v2.sql        # New SQL file
+    schema: [...]
+```
+
+**Option 2: Create a revision** (bug fix, same schema)
+
+```yaml
+versions:
+  - version: 1
+    effective_from: 2024-01-01
+    source: query.v1.sql  # Don't modify this
+    revisions:
+      - revision: 1
+        effective_from: 2024-07-01
+        source: query.v1.r1.sql   # New SQL file with fix
+        reason: Fixed null handling
+        backfill_since: 2024-01-01  # Backfill all affected partitions
+    schema: [...]
+```
+
+### Overriding Immutability
+
+In rare cases (e.g., fixing a typo, development environments), you can override:
+
+```bash
+# Force sync despite immutability violations
+$ bqdrift sync --allow-source-mutation
+
+⚠️  Source mutation override enabled
+
+Proceeding with modified sources. The following will be re-executed:
+  - analytics/daily_stats v1: 182 partitions
+
+Continue? [y/N]: y
+```
+
+**Warning:** Using `--allow-source-mutation` breaks the audit trail. The stored checksums will be updated, but you lose the ability to know what SQL originally ran for those partitions.
 
 ## Tracking Tables
 
