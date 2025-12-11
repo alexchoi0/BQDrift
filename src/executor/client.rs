@@ -12,6 +12,7 @@ use crate::error::{BqDriftError, Result, parse_bq_error, ErrorContext};
 use crate::schema::{BqType, Field, FieldMode, Schema, PartitionConfig, PartitionType, ClusterConfig};
 use crate::dsl::QueryDef;
 
+#[derive(Clone)]
 pub struct BqClient {
     client: Client,
     project_id: String,
