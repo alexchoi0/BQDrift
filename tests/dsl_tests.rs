@@ -101,14 +101,14 @@ fn test_versioned_query_schema_extension() {
 }
 
 #[test]
-fn test_versioned_query_sql_revisions() {
+fn test_versioned_query_revisions() {
     let loader = QueryLoader::new();
     let query = loader.load_query(fixtures_path().join("analytics/versioned_query.yaml")).unwrap();
 
     let v2 = &query.versions[1];
-    assert_eq!(v2.sql_revisions.len(), 1);
+    assert_eq!(v2.revisions.len(), 1);
 
-    let rev = &v2.sql_revisions[0];
+    let rev = &v2.revisions[0];
     assert_eq!(rev.revision, 1);
     assert_eq!(rev.reason, Some("Fixed null handling".to_string()));
     assert!(rev.sql_content.contains("COALESCE"));

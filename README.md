@@ -303,7 +303,7 @@ versions:
   - version: 2
     effective_from: 2024-03-01
     source: query.v2.sql
-    sql_revisions:
+    revisions:
       - revision: 1
         effective_from: 2024-03-15
         source: query.v2.r1.sql

@@ -24,7 +24,7 @@ pub struct RawVersionDef {
     #[serde(flatten)]
     pub source: SqlSource,
     #[serde(default)]
-    pub sql_revisions: Vec<SqlRevision>,
+    pub revisions: Vec<Revision>,
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
@@ -54,7 +54,7 @@ pub struct ExtendedSchema {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SqlRevision {
+pub struct Revision {
     pub revision: u32,
     pub effective_from: NaiveDate,
     #[serde(flatten)]
@@ -91,7 +91,7 @@ pub struct VersionDef {
     pub effective_from: NaiveDate,
     pub source: String,
     pub sql_content: String,
-    pub sql_revisions: Vec<ResolvedSqlRevision>,
+    pub revisions: Vec<ResolvedRevision>,
     pub description: Option<String>,
     pub backfill_since: Option<NaiveDate>,
     pub schema: Schema,
@@ -100,7 +100,7 @@ pub struct VersionDef {
 }
 
 #[derive(Debug, Clone)]
-pub struct ResolvedSqlRevision {
+pub struct ResolvedRevision {
     pub revision: u32,
     pub effective_from: NaiveDate,
     pub source: String,
@@ -112,7 +112,7 @@ pub struct ResolvedSqlRevision {
 
 impl VersionDef {
     pub fn get_sql_for_date(&self, execution_date: NaiveDate) -> &str {
-        let applicable_revision = self.sql_revisions
+        let applicable_revision = self.revisions
             .iter()
             .filter(|r| r.effective_from <= execution_date)
             .max_by_key(|r| r.effective_from);

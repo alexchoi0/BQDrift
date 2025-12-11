@@ -281,7 +281,7 @@ fn cmd_validate(loader: &QueryLoader, queries_path: &PathBuf) -> Result<(), Box<
         // Show version summary
         for version in &query.versions {
             let schema_fields = version.schema.fields.len();
-            let revisions = version.sql_revisions.len();
+            let revisions = version.revisions.len();
 
             if revisions > 0 {
                 println!("  v{}: {} fields, {} SQL revisions", version.version, schema_fields, revisions);
@@ -740,9 +740,9 @@ fn cmd_show(
             println!("  backfill_since: {}", backfill);
         }
 
-        if !version.sql_revisions.is_empty() {
+        if !version.revisions.is_empty() {
             println!("  revisions:");
-            for rev in &version.sql_revisions {
+            for rev in &version.revisions {
                 print!("    r{}: {} ({})", rev.revision, rev.source, rev.effective_from);
                 if let Some(reason) = &rev.reason {
                     print!(" - {}", reason);

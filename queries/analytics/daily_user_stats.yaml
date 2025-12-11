@@ -16,7 +16,7 @@ tags: [analytics, users, daily]
 versions:
   - version: 1
     effective_from: 2024-01-15
-    sql: daily_user_stats.v1.sql
+    source: daily_user_stats.v1.sql
     schema:
       - name: date
         type: DATE
@@ -32,11 +32,11 @@ versions:
   - version: 2
     effective_from: 2024-03-20
     description: Fixed join bug, schema unchanged
-    sql: daily_user_stats.v2.sql
-    sql_revisions:
+    source: daily_user_stats.v2.sql
+    revisions:
       - revision: 1
         effective_from: 2024-04-10
-        sql: daily_user_stats.v2.r1.sql
+        source: daily_user_stats.v2.r1.sql
         reason: Fixed null handling in join
         backfill_since: 2024-03-20
     schema: ${{ versions.1.schema }}
@@ -44,7 +44,7 @@ versions:
   - version: 3
     effective_from: 2024-06-01
     description: Added session duration metric
-    sql: daily_user_stats.v3.sql
+    source: daily_user_stats.v3.sql
     backfill_since: 2024-06-01
     schema:
       base: ${{ versions.2.schema }}

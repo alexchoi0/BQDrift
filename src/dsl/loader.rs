@@ -6,7 +6,7 @@ use crate::error::{BqDriftError, Result};
 use crate::schema::{ClusterConfig, Schema};
 use crate::invariant::{InvariantsDef, InvariantDef, InvariantCheck, SqlSource};
 use super::parser::{
-    QueryDef, VersionDef, ResolvedSqlRevision, RawQueryDef,
+    QueryDef, VersionDef, ResolvedRevision, RawQueryDef,
 };
 use super::resolver::VariableResolver;
 use super::dependencies::SqlDependencies;
@@ -97,8 +97,8 @@ impl QueryLoader {
 
             let dependencies = SqlDependencies::extract(&sql_content).tables;
 
-            let sql_revisions = self.resolve_sql_revisions(
-                &raw_version.sql_revisions,
+            let revisions = self.resolve_revisions(
+                &raw_version.revisions,
                 base_dir,
             )?;
 
@@ -120,7 +120,7 @@ impl QueryLoader {
                 effective_from: raw_version.effective_from,
                 source: source_name,
                 sql_content,
-                sql_revisions,
+                revisions,
                 description: raw_version.description,
                 backfill_since: raw_version.backfill_since,
                 schema,
@@ -145,11 +145,11 @@ impl QueryLoader {
         })
     }
 
-    fn resolve_sql_revisions(
+    fn resolve_revisions(
         &self,
-        revisions: &[super::parser::SqlRevision],
+        revisions: &[super::parser::Revision],
         base_dir: &Path,
-    ) -> Result<Vec<ResolvedSqlRevision>> {
+    ) -> Result<Vec<ResolvedRevision>> {
         revisions
             .iter()
             .map(|rev| {
@@ -167,7 +167,7 @@ impl QueryLoader {
 
                 let dependencies = SqlDependencies::extract(&sql_content).tables;
 
-                Ok(ResolvedSqlRevision {
+                Ok(ResolvedRevision {
                     revision: rev.revision,
                     effective_from: rev.effective_from,
                     source: source_name,
