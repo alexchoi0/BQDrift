@@ -63,6 +63,14 @@ enum Commands {
         /// Skip invariant checks
         #[arg(long)]
         skip_invariants: bool,
+
+        /// Scratch project for testing (writes to scratch instead of production)
+        #[arg(long, env = "BQDRIFT_SCRATCH_PROJECT")]
+        scratch: Option<String>,
+
+        /// TTL for scratch tables in hours (default: auto based on partition type)
+        #[arg(long)]
+        scratch_ttl: Option<u32>,
     },
 
     /// Backfill a query for a date range
@@ -171,6 +179,22 @@ enum Commands {
         #[arg(long, default_value = "bqdrift")]
         tracking_dataset: String,
     },
+
+    /// Manage scratch tables
+    Scratch {
+        #[command(subcommand)]
+        action: ScratchAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum ScratchAction {
+    /// List scratch tables
+    List {
+        /// Scratch project
+        #[arg(long, env = "BQDRIFT_SCRATCH_PROJECT")]
+        project: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -256,9 +280,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             cmd_list(&loader, &cli.queries, detailed)?;
         }
 
-        Commands::Run { query, partition, dry_run, skip_invariants } => {
+        Commands::Run { query, partition, dry_run, skip_invariants, scratch, scratch_ttl } => {
             let project = cli.project.ok_or("Project ID required (--project or GCP_PROJECT_ID)")?;
-            cmd_run(&loader, &cli.queries, &project, query, partition, dry_run, skip_invariants).await?;
+            cmd_run(&loader, &cli.queries, &project, query, partition, dry_run, skip_invariants, scratch, scratch_ttl).await?;
         }
 
         Commands::Backfill { query, from, to, dry_run, skip_invariants } => {
@@ -291,6 +315,14 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
 
         Commands::Audit { query, modified_only, diff, output, tracking_dataset: _ } => {
             cmd_audit(&loader, &cli.queries, query, modified_only, diff, output)?;
+        }
+
+        Commands::Scratch { action } => {
+            match action {
+                ScratchAction::List { project } => {
+                    cmd_scratch_list(&project).await?;
+                }
+            }
         }
     }
 
@@ -417,7 +449,11 @@ async fn cmd_run(
     partition: Option<String>,
     dry_run: bool,
     skip_invariants: bool,
+    scratch: Option<String>,
+    scratch_ttl: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    use bqdrift::executor::{ScratchConfig, ScratchWriter};
+
     let queries = loader.load_dir(queries_path)?;
 
     if dry_run {
@@ -470,6 +506,52 @@ async fn cmd_run(
         info!("Running with invariants skipped");
     }
 
+    if let Some(scratch_project) = scratch {
+        let query_name = query_name.ok_or("Query name required for scratch mode (--query)")?;
+
+        let query = queries.iter()
+            .find(|q| q.name == query_name)
+            .ok_or_else(|| format!("Query '{}' not found", query_name))?;
+
+        let partition_type = &query.destination.partition.partition_type;
+        let partition_key = match &partition {
+            Some(p) => parse_partition_key(p, partition_type)?,
+            None => default_partition_key(partition_type),
+        };
+
+        info!("Running in scratch mode");
+        info!("Scratch project: {}", scratch_project);
+
+        let scratch_client = BqClient::new(&scratch_project).await?;
+        let mut config = ScratchConfig::new(scratch_project.clone());
+        if let Some(ttl) = scratch_ttl {
+            config = config.with_ttl(ttl);
+        }
+
+        let scratch_writer = ScratchWriter::new(scratch_client, config);
+        scratch_writer.ensure_dataset().await?;
+
+        info!("Writing to scratch table: {}", scratch_writer.scratch_table_fqn(query));
+
+        let stats = scratch_writer.write_partition(query, partition_key, !skip_invariants).await?;
+
+        println!("\n✓ {} v{} completed (scratch)", stats.query_name, stats.version);
+        println!("  Destination: {}", stats.scratch_table);
+        println!("  Partition: {}", stats.partition_key);
+        println!("  Expires: {}", stats.expiration.format("%Y-%m-%dT%H:%M:%SZ"));
+
+        if !skip_invariants {
+            if let Some(report) = &stats.invariant_report {
+                print_scratch_invariants(report);
+            }
+        }
+
+        println!("\nTo promote to production, run:");
+        println!("  bqdrift run --query {} --partition {}", stats.query_name, stats.partition_key);
+
+        return Ok(());
+    }
+
     match query_name {
         Some(name) => {
             let query = queries.iter()
@@ -513,6 +595,38 @@ async fn cmd_run(
     }
 
     Ok(())
+}
+
+fn print_scratch_invariants(report: &bqdrift::invariant::InvariantReport) {
+    let mut passed = 0;
+    let mut failed_warnings = 0;
+    let mut failed_errors = 0;
+
+    for result in report.before.iter().chain(report.after.iter()) {
+        match result.status {
+            CheckStatus::Passed => passed += 1,
+            CheckStatus::Failed => {
+                if result.severity == Severity::Warning {
+                    failed_warnings += 1;
+                } else {
+                    failed_errors += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if passed > 0 || failed_warnings > 0 || failed_errors > 0 {
+        println!("\n  Invariants:");
+        for result in report.before.iter().chain(report.after.iter()) {
+            let icon = match result.status {
+                CheckStatus::Passed => "✓",
+                CheckStatus::Failed => if result.severity == Severity::Warning { "⚠" } else { "✗" },
+                _ => "?",
+            };
+            println!("    {} {}: {}", icon, result.name, result.message);
+        }
+    }
 }
 
 fn print_stats(stats: &WriteStats, skip_invariants: bool) {
@@ -1073,6 +1187,27 @@ fn cmd_audit(
                 println!("  - Creating revisions for bug fixes");
                 println!("  - Running 'bqdrift sync --allow-source-mutation' to force update");
             }
+        }
+    }
+
+    Ok(())
+}
+
+async fn cmd_scratch_list(project: &str) -> Result<(), Box<dyn std::error::Error>> {
+    use bqdrift::executor::{ScratchConfig, ScratchWriter};
+
+    let client = BqClient::new(project).await?;
+    let config = ScratchConfig::new(project.to_string());
+    let writer = ScratchWriter::new(client, config);
+
+    let tables = writer.list_tables().await?;
+
+    if tables.is_empty() {
+        println!("No scratch tables found in {}.bqdrift_scratch", project);
+    } else {
+        println!("Scratch tables in {}.bqdrift_scratch:\n", project);
+        for table in tables {
+            println!("  {}", table);
         }
     }
 
