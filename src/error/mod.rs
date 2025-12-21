@@ -53,6 +53,9 @@ pub enum BqDriftError {
     #[error("File include error: {0}")]
     FileInclude(String),
 
+    #[error("Executor error: {0}")]
+    Executor(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

@@ -12,6 +12,8 @@ use super::resolver::VariableResolver;
 use super::dependencies::SqlDependencies;
 use super::preprocessor::YamlPreprocessor;
 
+pub use bq_runner::{SqlLoader, SqlFile};
+
 pub struct QueryLoader {
     resolver: VariableResolver,
     preprocessor: YamlPreprocessor,
@@ -38,6 +40,16 @@ impl QueryLoader {
             .into_iter()
             .map(|yaml_path| self.load_query(&yaml_path))
             .collect()
+    }
+
+    pub fn load_sql_dir(&self, path: impl AsRef<Path>) -> Result<Vec<SqlFile>> {
+        SqlLoader::load_dir(path)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))
+    }
+
+    pub fn load_sql_file(&self, path: impl AsRef<Path>) -> Result<SqlFile> {
+        SqlLoader::load_file(path)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))
     }
 
     pub fn load_yaml_contents(&self, path: impl AsRef<Path>) -> Result<HashMap<String, String>> {

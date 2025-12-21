@@ -10,7 +10,7 @@ use bqdrift::{DriftDetector, DriftState, decode_sql, format_sql_diff, has_change
 use tabled::{Table, settings::Style};
 use bqdrift::executor::BqClient;
 use bqdrift::error::{BqDriftError, BigQueryError};
-use bqdrift::executor::WriteStats;
+use bqdrift::executor::PartitionWriteStats;
 use bqdrift::schema::{PartitionKey, PartitionType};
 
 #[derive(Parser)]
@@ -673,7 +673,7 @@ fn print_scratch_invariants(report: &bqdrift::invariant::InvariantReport) {
     }
 }
 
-fn print_stats(stats: &WriteStats, skip_invariants: bool) {
+fn print_stats(stats: &PartitionWriteStats, skip_invariants: bool) {
     println!("✓ {} v{} completed for {}", stats.query_name, stats.version, stats.partition_key);
 
     if !skip_invariants {

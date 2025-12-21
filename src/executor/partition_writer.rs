@@ -8,7 +8,7 @@ use crate::invariant::{
 use super::client::BqClient;
 
 #[derive(Debug, Clone)]
-pub struct WriteStats {
+pub struct PartitionWriteStats {
     pub query_name: String,
     pub version: u32,
     pub partition_key: PartitionKey,
@@ -30,7 +30,7 @@ impl PartitionWriter {
         &self,
         query_def: &QueryDef,
         partition_key: PartitionKey,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         self.write_partition_with_invariants(query_def, partition_key, true).await
     }
 
@@ -38,7 +38,7 @@ impl PartitionWriter {
         &self,
         query_def: &QueryDef,
         partition_key: PartitionKey,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         self.write_partition_with_invariants(query_def, partition_key, false).await
     }
 
@@ -47,7 +47,7 @@ impl PartitionWriter {
         query_def: &QueryDef,
         partition_key: PartitionKey,
         run_invariants: bool,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         let partition_date = partition_key.to_naive_date();
         let version = query_def
             .get_version_for_date(partition_date)
@@ -92,7 +92,7 @@ impl PartitionWriter {
             self.client.execute_query(&full_sql).await?;
         }
 
-        Ok(WriteStats {
+        Ok(PartitionWriteStats {
             query_name: query_def.name.clone(),
             version: version.version,
             partition_key,
@@ -172,7 +172,7 @@ impl PartitionWriter {
         &self,
         query_def: &QueryDef,
         partition_key: PartitionKey,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         self.write_partition_truncate_with_invariants(query_def, partition_key, true).await
     }
 
@@ -180,7 +180,7 @@ impl PartitionWriter {
         &self,
         query_def: &QueryDef,
         partition_key: PartitionKey,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         self.write_partition_truncate_with_invariants(query_def, partition_key, false).await
     }
 
@@ -189,7 +189,7 @@ impl PartitionWriter {
         query_def: &QueryDef,
         partition_key: PartitionKey,
         run_invariants: bool,
-    ) -> Result<WriteStats> {
+    ) -> Result<PartitionWriteStats> {
         let partition_date = partition_key.to_naive_date();
         let version = query_def
             .get_version_for_date(partition_date)
@@ -273,7 +273,7 @@ impl PartitionWriter {
             self.client.execute_query(&insert_sql).await?;
         }
 
-        Ok(WriteStats {
+        Ok(PartitionWriteStats {
             query_name: query_def.name.clone(),
             version: version.version,
             partition_key,
