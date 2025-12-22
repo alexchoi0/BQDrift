@@ -1,7 +1,5 @@
 use std::collections::HashMap;
-use std::fs;
-use std::path::{Path, PathBuf};
-use glob::glob;
+use std::path::Path;
 use crate::error::{BqDriftError, Result};
 use crate::schema::{ClusterConfig, Schema};
 use crate::invariant::InvariantsDef;
@@ -11,6 +9,8 @@ use super::parser::{
 use super::resolver::VariableResolver;
 use super::dependencies::SqlDependencies;
 use super::preprocessor::YamlPreprocessor;
+
+pub use bq_runner::{FileLoader, SqlLoader, SqlFile};
 
 pub struct QueryLoader {
     resolver: VariableResolver,
@@ -26,35 +26,33 @@ impl QueryLoader {
     }
 
     pub fn load_dir(&self, path: impl AsRef<Path>) -> Result<Vec<QueryDef>> {
-        let pattern = path.as_ref().join("**/*.yaml");
-        let pattern_str = pattern.to_string_lossy();
-
-        let yaml_files: Vec<PathBuf> = glob(&pattern_str)
-            .map_err(|e| BqDriftError::DslParse(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+        let yaml_files = FileLoader::load_dir(&path, "yaml")
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))?;
 
         yaml_files
             .into_iter()
-            .map(|yaml_path| self.load_query(&yaml_path))
+            .map(|file| self.load_query(&file.path))
             .collect()
     }
 
-    pub fn load_yaml_contents(&self, path: impl AsRef<Path>) -> Result<HashMap<String, String>> {
-        let pattern = path.as_ref().join("**/*.yaml");
-        let pattern_str = pattern.to_string_lossy();
+    pub fn load_sql_dir(&self, path: impl AsRef<Path>) -> Result<Vec<SqlFile>> {
+        SqlLoader::load_dir(path)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))
+    }
 
-        let yaml_files: Vec<PathBuf> = glob(&pattern_str)
-            .map_err(|e| BqDriftError::DslParse(e.to_string()))?
-            .filter_map(|r| r.ok())
-            .collect();
+    pub fn load_sql_file(&self, path: impl AsRef<Path>) -> Result<SqlFile> {
+        SqlLoader::load_file(path)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))
+    }
+
+    pub fn load_yaml_contents(&self, path: impl AsRef<Path>) -> Result<HashMap<String, String>> {
+        let yaml_files = FileLoader::load_dir(&path, "yaml")
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))?;
 
         let mut contents = HashMap::new();
-        for yaml_path in yaml_files {
-            let yaml_content = fs::read_to_string(&yaml_path)
-                .map_err(|_| BqDriftError::YamlFileNotFound(yaml_path.display().to_string()))?;
-            let base_dir = yaml_path.parent().unwrap_or(Path::new("."));
-            let processed = self.preprocessor.process(&yaml_content, base_dir)?;
+        for file in yaml_files {
+            let base_dir = file.path.parent().unwrap_or(Path::new("."));
+            let processed = self.preprocessor.process(&file.content, base_dir)?;
             let raw: RawQueryDef = serde_yaml::from_str(&processed)?;
             contents.insert(raw.name, processed);
         }
@@ -63,11 +61,11 @@ impl QueryLoader {
 
     pub fn load_query(&self, yaml_path: impl AsRef<Path>) -> Result<QueryDef> {
         let yaml_path = yaml_path.as_ref();
-        let yaml_content = fs::read_to_string(yaml_path)
-            .map_err(|_| BqDriftError::YamlFileNotFound(yaml_path.display().to_string()))?;
+        let file = FileLoader::load_file(yaml_path)
+            .map_err(|e| BqDriftError::DslParse(e.to_string()))?;
 
         let base_dir = yaml_path.parent().unwrap_or(Path::new("."));
-        let processed = self.preprocessor.process(&yaml_content, base_dir)?;
+        let processed = self.preprocessor.process(&file.content, base_dir)?;
 
         let raw: RawQueryDef = serde_yaml::from_str(&processed)?;
 

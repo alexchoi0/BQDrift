@@ -3,11 +3,11 @@ use crate::error::Result;
 use crate::dsl::QueryDef;
 use crate::schema::PartitionKey;
 use super::client::BqClient;
-use super::partition_writer::{PartitionWriter, WriteStats};
+use super::partition_writer::{PartitionWriter, PartitionWriteStats};
 
 #[derive(Debug)]
 pub struct RunReport {
-    pub stats: Vec<WriteStats>,
+    pub stats: Vec<PartitionWriteStats>,
     pub failures: Vec<RunFailure>,
 }
 
@@ -58,11 +58,11 @@ impl Runner {
         Ok(RunReport { stats, failures })
     }
 
-    pub async fn run_query(&self, query_name: &str, date: NaiveDate) -> Result<WriteStats> {
+    pub async fn run_query(&self, query_name: &str, date: NaiveDate) -> Result<PartitionWriteStats> {
         self.run_query_partition(query_name, PartitionKey::Day(date)).await
     }
 
-    pub async fn run_query_partition(&self, query_name: &str, partition_key: PartitionKey) -> Result<WriteStats> {
+    pub async fn run_query_partition(&self, query_name: &str, partition_key: PartitionKey) -> Result<PartitionWriteStats> {
         let query = self.queries
             .iter()
             .find(|q| q.name == query_name)
