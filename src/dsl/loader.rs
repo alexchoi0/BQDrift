@@ -10,7 +10,7 @@ use super::resolver::VariableResolver;
 use super::dependencies::SqlDependencies;
 use super::preprocessor::YamlPreprocessor;
 
-pub use bq_runner::{FileLoader, LoadedFile, SqlLoader, SqlFile};
+pub use bq_runner::{FileLoader, SqlLoader, SqlFile};
 
 pub struct QueryLoader {
     resolver: VariableResolver,

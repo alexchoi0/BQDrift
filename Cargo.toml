@@ -36,7 +36,7 @@ rustyline = "14"
 atty = "0.2"
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
-bq-runner = { path = "crates/bq-runner" }
+bq-runner = { git = "https://github.com/alexchoi0/bq-runner" }
 
 [dev-dependencies]
 tokio-test = "0.4"

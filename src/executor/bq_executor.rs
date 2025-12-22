@@ -39,21 +39,21 @@ impl<'a> ExecutorRunner<'a> {
         self.executor.mode()
     }
 
-    pub fn run_today(&self) -> Result<ExecutorRunReport> {
+    pub async fn run_today(&self) -> Result<ExecutorRunReport> {
         let today = Utc::now().date_naive();
-        self.run_for_date(today)
+        self.run_for_date(today).await
     }
 
-    pub fn run_for_date(&self, date: NaiveDate) -> Result<ExecutorRunReport> {
-        self.run_for_partition(PartitionKey::Day(date))
+    pub async fn run_for_date(&self, date: NaiveDate) -> Result<ExecutorRunReport> {
+        self.run_for_partition(PartitionKey::Day(date)).await
     }
 
-    pub fn run_for_partition(&self, partition_key: PartitionKey) -> Result<ExecutorRunReport> {
+    pub async fn run_for_partition(&self, partition_key: PartitionKey) -> Result<ExecutorRunReport> {
         let mut stats = Vec::new();
         let mut failures = Vec::new();
 
         for query in &self.queries {
-            match self.execute_query(query, partition_key.clone()) {
+            match self.execute_query(query, partition_key.clone()).await {
                 Ok(s) => stats.push(s),
                 Err(e) => failures.push(ExecutorRunFailure {
                     query_name: query.name.clone(),
@@ -66,11 +66,11 @@ impl<'a> ExecutorRunner<'a> {
         Ok(ExecutorRunReport { stats, failures })
     }
 
-    pub fn run_query(&self, query_name: &str, date: NaiveDate) -> Result<ExecutorWriteStats> {
-        self.run_query_partition(query_name, PartitionKey::Day(date))
+    pub async fn run_query(&self, query_name: &str, date: NaiveDate) -> Result<ExecutorWriteStats> {
+        self.run_query_partition(query_name, PartitionKey::Day(date)).await
     }
 
-    pub fn run_query_partition(&self, query_name: &str, partition_key: PartitionKey) -> Result<ExecutorWriteStats> {
+    pub async fn run_query_partition(&self, query_name: &str, partition_key: PartitionKey) -> Result<ExecutorWriteStats> {
         let query = self.queries
             .iter()
             .find(|q| q.name == query_name)
@@ -78,10 +78,10 @@ impl<'a> ExecutorRunner<'a> {
                 format!("Query '{}' not found", query_name)
             ))?;
 
-        self.execute_query(query, partition_key)
+        self.execute_query(query, partition_key).await
     }
 
-    pub fn backfill(
+    pub async fn backfill(
         &self,
         query_name: &str,
         from: NaiveDate,
@@ -92,10 +92,10 @@ impl<'a> ExecutorRunner<'a> {
             PartitionKey::Day(from),
             PartitionKey::Day(to),
             None,
-        )
+        ).await
     }
 
-    pub fn backfill_partitions(
+    pub async fn backfill_partitions(
         &self,
         query_name: &str,
         from: PartitionKey,
@@ -114,7 +114,7 @@ impl<'a> ExecutorRunner<'a> {
         let mut current = from;
 
         while current <= to {
-            match self.execute_query(query, current.clone()) {
+            match self.execute_query(query, current.clone()).await {
                 Ok(s) => stats.push(s),
                 Err(e) => failures.push(ExecutorRunFailure {
                     query_name: query_name.to_string(),
@@ -135,19 +135,21 @@ impl<'a> ExecutorRunner<'a> {
         &self.queries
     }
 
-    pub fn execute_sql(&self, sql: &str) -> Result<u64> {
+    pub async fn execute_sql(&self, sql: &str) -> Result<u64> {
         self.executor
             .execute(sql)
+            .await
             .map_err(|e| BqDriftError::Executor(e.to_string()))
     }
 
-    pub fn query(&self, sql: &str) -> Result<QueryResult> {
+    pub async fn query(&self, sql: &str) -> Result<QueryResult> {
         self.executor
             .query(sql)
+            .await
             .map_err(|e| BqDriftError::Executor(e.to_string()))
     }
 
-    fn execute_query(&self, query_def: &QueryDef, partition_key: PartitionKey) -> Result<ExecutorWriteStats> {
+    async fn execute_query(&self, query_def: &QueryDef, partition_key: PartitionKey) -> Result<ExecutorWriteStats> {
         let partition_date = partition_key.to_naive_date();
         let version = query_def
             .get_version_for_date(partition_date)
@@ -160,6 +162,7 @@ impl<'a> ExecutorRunner<'a> {
 
         let rows_affected = self.executor
             .execute(&full_sql)
+            .await
             .map_err(|e| BqDriftError::Executor(e.to_string()))?;
 
         Ok(ExecutorWriteStats {
